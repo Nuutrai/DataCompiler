@@ -63,131 +63,47 @@ impl Lexer {
     }
     
     pub fn tokenize(mut self) -> Vec<Token> {
-        if self.current_pos >= self.input.len() {
-            // return vec!(Token::new(TokenKind::Error, TextSpan::new(self.current_pos, self.current_pos, "Input already tokenized".to_string())));
-        }
-
-        self.skip_whitespace();
-        self.skip_comments();
-
-        let mut vec: Vec<Token> = Vec::new();
+        let mut tokens = Vec::new();
         
-        while let Some(c) = self.consume() {
+        loop {
+            self.skip_whitespace();
             
-            if c.is_whitespace() {
-                continue;
-            }
-
-            if c == '(' {
-                vec.push(Token::new(
-                    TokenKind::LeftParen,
-                    TextSpan::new(self.current_pos, self.current_pos, self.current_line, "(".to_string()),
-                ));
-                
-                continue;
-            }
-
-            if c == ')' {
-                vec.push(Token::new(
-                    TokenKind::RightParen,
-                    TextSpan::new(self.current_pos, self.current_pos, self.current_line, ")".to_string()),
-                ));
-                
-                continue;
-            }
+            let Some(c) = self.current_char() else {
+                break; // end of input
+            };
             
-            if c == '=' {
-                vec.push(Token::new(
-                    TokenKind::Equals,
-                    TextSpan::new(self.current_pos, self.current_pos, self.current_line, "=".to_string()),
-                ))
-            }
-
-            if c == '"' {
-                self.string_literal_tokenize(self.current_char() == Some('"') || self.peek_char() == Some('"'))
-            }
-            
-            if c.is_alphabetic() {
-                vec.push(self.greedy_tokenize(c));
-                continue
-            }
-            
-        }
-
-        vec
-    }
-    
-    fn greedy_tokenize(&mut self, c: char) -> Token {
-        let mut buffer = c.to_string();
-        let start = self.current_pos;
-        while let Some(c) = self.consume() {
-            buffer.push(c);
-
-            match self.current_char() {
-                Some(peek) if !peek.is_alphanumeric() => {
-                    let end = self.current_pos;
-                    if buffer.to_lowercase() == "data" {
-                        return Token::new(TokenKind::Data, TextSpan::new(start, end, self.current_line, buffer));
-                    }
-                    return Token::new(TokenKind::Literal, TextSpan::new(start, end, self.current_line, buffer));
+            let token = match c {
+                '(' => self.consume_single_char(TokenKind::LeftParen),
+                ')' => self.consume_single_char(TokenKind::RightParen),
+                '=' => self.consume_single_char(TokenKind::Equals),
+                '"' => self.consume_any_string(),
+                '/' if self.peek_char() == Some('/') => {
+                    self.skip_comments();
+                    continue;
                 }
-                None => {
-                    
-                    // todo make sure there's no need for #consume
-                    
-                    let end = self.current_pos;
-                    if buffer.to_lowercase() == "data" {
-                        return Token::new(TokenKind::Data, TextSpan::new(start, end, self.current_line, buffer));
-                    }
-                    return Token::new(TokenKind::Literal, TextSpan::new(start, end, self.current_line, buffer));
+                c if c.is_alphabetic() => self.consume_identifier(),
+                c if c.is_whitespace() => {
+                    self.consume();
+                    continue;
                 }
-                Some(_) => (),
-            }
-        }
-
-        Token::new(
-            TokenKind::Error,
-            TextSpan::new(
-                start,
-                self.current_pos,
-                self.current_line,
-                "Literal does not terminate".to_string(),
-            ),
-        )
-    }
-    
-    fn string_literal_tokenize(&mut self, is_multi_line: bool) {
-        if is_multi_line {
-            self.consume();
-            self.consume();
-        }
-        let mut buffer = String::new();
-        while let Some(c) = self.consume() {
-            buffer.push(c);
+                _ => self.consume_error(),
+            };
             
-            if self.current_char() == Some('"') {
-                break;
-            }
+            tokens.push(token);
         }
+        
+        tokens
     }
-    
+
     fn skip_whitespace(&mut self) {
-        while self.current_char().unwrap().is_whitespace() && self.current_pos < self.input.len() {
-            self.consume();
-        }
+        self.consume_while(|c| c.is_whitespace());
     }
     
     fn skip_comments(&mut self) {
-        while let Some(c) = self.current_char()
-            && let Some(peek) = self.peek_char()
-        {
-            if c != '/' || peek != '/' {
-                break;
-            }
-            'exhaust_comment: while let Some(c) = self.consume() {
-                if c == '\n' {
-                    break 'exhaust_comment;
-                }
+        while self.current_char() == Some('/') && self.peek_char() == Some('/') {
+            self.consume_until(|c| c == '\n');
+            if self.current_char() == Some('\n') {
+                self.consume();
             }
         }
     }
@@ -201,22 +117,113 @@ impl Lexer {
     }
     
     fn peek_char_by(&self, by: usize) -> Option<char> {
-        self.input.chars().nth(self.current_pos + cmp::max(by, 1))
+        self.input.chars().nth(self.current_pos + by)
     }
     
     fn consume(&mut self) -> Option<char> {
-        if self.current_pos >= self.input.len() {
-            return None;
-        }
-        if self.peek_char() == Some('\n') {
-            self.current_pos += 1;
+        let c = self.current_char()?;
+        
+        if c == '\n' {
             self.current_line += 1;
         }
-        let c = self.current_char();
+        
         self.current_pos += 1;
-        c
+        Some(c)
+    }
+
+    fn consume_while<F>(&mut self, predicate: F) -> String 
+    where F: Fn(char) -> bool 
+    {
+        let mut buffer = String::new();
+        while let Some(c) = self.current_char() && predicate(c) {
+            buffer.push(c);
+            self.consume();
+        }
+        buffer
     }
     
+    fn consume_until<F>(&mut self, predicate: F) -> String 
+    where F: Fn(char) -> bool 
+    {
+        self.consume_while(|c| !predicate(c))
+    }
+
+    fn consume_n_chars(&mut self, n: usize) {
+        (0..n).for_each(|_| { self.consume(); });
+    }
+
+    fn consume_single_char(&mut self, kind: TokenKind) -> Token {
+        let start = self.current_pos;
+        let ch = self.consume().unwrap();
+        Token::new(
+            kind,
+            TextSpan::new(start, self.current_pos, self.current_line, ch.to_string())
+        )
+    }
+
+    fn consume_identifier(&mut self) -> Token {
+        let start = self.current_pos;
+        let buffer = self.consume_while(|c| c.is_alphanumeric() || c == '_');
+        
+        let kind = match buffer.as_str() {
+            "data" => TokenKind::Data,
+            _ => TokenKind::Literal,
+        };
+        
+        Token::new(kind, TextSpan::new(start, self.current_pos, self.current_line, buffer))
+    }
+
+    fn consume_any_string(&mut self) -> Token {
+        let start = self.current_pos;
+        let quotes = self.count_consecutive_chars('"', 3);
+
+        self.consume_n_chars(quotes); 
+        
+        let mut buffer = String::new();
+        
+        while let Some(c) = self.current_char() {
+            let at_closing = (0..quotes).all(|i| self.peek_char_by(i) == Some('"'));
+            
+            match (at_closing, quotes == 1 && c == '\n') {
+                (true, _) => break,
+                (_, true) => return Token::new(
+                    TokenKind::Error,
+                    TextSpan::new(start, self.current_pos, self.current_line, 
+                        "Unterminated string".to_string())
+                ),
+                _ => {
+                    buffer.push(c);
+                    self.consume();
+                }
+            }
+        }
+        
+        self.consume_n_chars(quotes);
+        
+        Token::new(
+            TokenKind::Literal,
+            TextSpan::new(start, self.current_pos, self.current_line, buffer)
+        )
+    }
+
+    fn consume_error(&mut self) -> Token {
+        let start = self.current_pos;
+        let ch = self.consume().unwrap_or('\0');
+        Token::new(
+            TokenKind::Error,
+            TextSpan::new(start, self.current_pos, self.current_line, 
+                format!("Unexpected character: '{}'", ch))
+        )
+    }
+
+    fn count_consecutive_chars(&self, ch: char, max: usize) -> usize {
+        (0..max)
+            .filter(|&i| self.peek_char_by(i) == Some(ch))
+            .count()
+            .max(1)
+    }
+}
+
     // pub fn next_token(&mut self) -> Option<Token> {
     //     self.skip_whitespace();
     //
@@ -270,5 +277,3 @@ impl Lexer {
     //
     //     number
     // }
-    
-}

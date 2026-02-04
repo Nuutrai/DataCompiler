@@ -1,0 +1,8 @@
+// This is a comment
+data = "hello"
+name = """
+multi
+line
+string
+"""
+(test)
