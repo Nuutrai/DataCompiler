@@ -1,0 +1,87 @@
+data<"https://github.com/Nuutrai/DataCompiler/std.dt"> = std
+data<"./lib.dt">
+data<std::io> = io
+
+data main() {
+    data hi // Variable initialization
+    hi = 2 // Variable assignment
+    hi = hi + 1 // Illegal assignment as all variables are immutable
+    data hi2 = hi + 1
+    
+    //          vvvvvvv Not necessary, but can be used
+    data hello: data[5] = "Hello"
+    //          ^^^^ Data when used as a type represents a byte
+    //              vvv This represents an array with size 6
+    data world: data[6] = "World!"
+    
+    data string: data[13]
+    string[0] = 1 // Initialize the first byte of the string
+    
+    string = hello + ", " + world // Illegal reassignment
+    
+    string[0] = 2 // Items in an array may be modified
+        
+    copy(hello, string, 0, size(hello)) // Copy the contents of `hello` into `string` with an offset of 0
+    copy(", ", string, size(hello), size(", ")) // Copy ", " (taken as a byte array) to `string` with an offset of size(hello)-1
+    copy(world, string, size(hello) + size(", "), size(world)) // Copy the contents of `world` into `string` starting with an offset of size(hello) + size(", ") - 1
+
+    std::print(string) // Prints `Hello, World!`
+    
+}
+
+data foreach(array: &data[], callback: &(data -> ())) {
+    {
+        !foreach(array, callback, 0, size(array))
+    }
+}
+
+data !foreach(array: &data[], callback: &(data -> ()), index: Integer, more: Integer) {
+    {
+        &callback(&array[index])
+        index < (more - 1) ? !foreach(array, callback, index + 1, more - 1)
+    }
+}
+
+
+//                               v vvvvvvv Return type
+data add(a: Integer, b: Integer) : Integer {
+    data result = a + b
+    { // Opens a block, allowing for results to not be returned implicitly
+      //      v If     v Else        
+        a > b ? result : b
+    } // Variables can be assigned to a block. This allows for a delayed evaluation of the block's result, and also returned the block's result as a value (able to be implicitly returned)
+    a > b ? result : b // This will make the function return `result` or `b.value`
+}
+
+data copy(source: &data[], destination: &data[], offset: Integer, length: Integer) {
+    {
+        !copy(&source, &destination, offset, length, 0)
+    }
+}
+
+// No loops, wah wah wah, use recursion (We'll do a funky thing that allows for a LOT of recursion without stack overflows)
+
+data !copy(source: &data[], destination: &data[], offset: Integer, length: Integer, index: Integer) {
+    {
+        &destination[offset] = &source[index]
+        index < (length - 1) ? !copy(source, destination, offset + 1, length - 1, index + 1)
+    }
+}
+
+//          vv Angle brackets signify type initialization
+data Integer<> {
+//  vvvvv Field with the name `value` is implicitly returned when a user tries to access type
+    value: data[4]
+}
+
+//              v Alphabetic characters in the angle brackets signify generic/parameter types
+data LinkedList<T> {
+//        v The & makes these pointers
+    head: &LinkedListNode<T>
+    tail: &LinkedListNode<T>
+}
+
+data LinkedListNode<T> {
+    value: &T
+    next: &LinkedListNode<T>
+}
