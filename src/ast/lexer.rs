@@ -3,7 +3,9 @@ use std::cmp;
 #[derive(Debug)]
 enum TokenKind {
     Data,
-    Literal,
+    Literal(String),
+    Number(usize),
+    
     RightParen,
     LeftParen,
     CurlyLeft,
@@ -125,6 +127,7 @@ impl Lexer {
                 
                 '"' => self.consume_any_string(),
                 c if c.is_alphabetic() => self.consume_identifier(),
+                c if c.is_digit(10) => self.consume_number(),
                 c if c.is_whitespace() => {
                     self.consume();
                     continue;
@@ -221,7 +224,34 @@ impl Lexer {
         
         Token::new(kind, TextSpan::new(start, self.current_pos, self.current_line, buffer))
     }
-
+    
+    fn consume_number(&mut self) -> Token {
+        
+        let start = self.current_pos;
+        let mut buffer = String::new();
+        while let Some(_) = self.current_char() {
+            
+            self.consume_while(Some(&mut buffer), |c| c.is_digit(10));
+            
+            if self.current_char() != Some('_') {
+                break
+            }
+            
+            self.consume();
+        }
+        
+        let mut number: usize = 0;
+        
+        for c in buffer.chars() {
+            
+            number *= 10;
+            number += c.to_digit(10).unwrap() as usize;
+            
+        }
+        
+        Token::new(TokenKind::Number(number), TextSpan::new(start, self.current_pos, self.current_line, buffer))
+    }
+    
     fn consume_any_string(&mut self) -> Token {
         let start = self.current_pos;
         let quotes = self.count_consecutive_chars('"', 3);
