@@ -139,12 +139,12 @@ impl Lexer {
     }
 
     fn skip_whitespace(&mut self) {
-        self.consume_while(|c| c.is_whitespace());
+        self.consume_while(None, |c| c.is_whitespace());
     }
     
     fn skip_comments(&mut self) {
         while self.current_char() == Some('/') && self.peek_char() == Some('/') {
-            self.consume_until(|c| c == '\n');
+            self.consume_until(None, |c| c == '\n');
             if self.current_char() == Some('\n') {
                 self.consume();
             }
@@ -174,21 +174,26 @@ impl Lexer {
         Some(c)
     }
 
-    fn consume_while<F>(&mut self, predicate: F) -> String 
+    fn consume_while<F>(&mut self, mut buffer: Option<&mut String>, predicate: F)
     where F: Fn(char) -> bool 
     {
-        let mut buffer = String::new();
         while let Some(c) = self.current_char() && predicate(c) {
-            buffer.push(c);
+            
             self.consume();
+            
+            if let Some(ref mut buf) = buffer {
+                buf.push(c);
+            } else {
+                continue;
+            };
+            
         }
-        buffer
     }
     
-    fn consume_until<F>(&mut self, predicate: F) -> String 
+    fn consume_until<F>(&mut self, buffer: Option<&mut String>, predicate: F)
     where F: Fn(char) -> bool 
     {
-        self.consume_while(|c| !predicate(c))
+        self.consume_while(buffer, |c| !predicate(c))
     }
 
     fn consume_n_chars(&mut self, n: usize) {
@@ -206,11 +211,12 @@ impl Lexer {
 
     fn consume_identifier(&mut self) -> Token {
         let start = self.current_pos;
-        let buffer = self.consume_while(|c| c.is_alphanumeric() || c == '_');
+        let mut buffer = String::new();
+        self.consume_while(Some(&mut buffer), |c| c.is_alphanumeric() || c == '_');
         
         let kind = match buffer.as_str() {
             "data" => TokenKind::Data,
-            _ => TokenKind::Literal,
+            _ => TokenKind::Literal(buffer.clone()),
         };
         
         Token::new(kind, TextSpan::new(start, self.current_pos, self.current_line, buffer))
@@ -244,7 +250,7 @@ impl Lexer {
         self.consume_n_chars(quotes);
         
         Token::new(
-            TokenKind::Literal,
+            TokenKind::Literal(buffer.clone()),
             TextSpan::new(start, self.current_pos, self.current_line, buffer)
         )
     }
