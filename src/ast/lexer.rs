@@ -6,7 +6,28 @@ enum TokenKind {
     Literal,
     RightParen,
     LeftParen,
+    CurlyLeft,
+    CurlyRight,
+    AngledLeft,
+    AngledRight,
+    SquareLeft,
+    SquareRight,
+    
+    QuestionMark,
+    Colon,
     Equals,
+    Comma,
+    Exclamation,
+    Ampersand,
+    Plus,
+    Minus,
+    Asterisk,
+    Slash,
+    Period,
+    Percent,
+    Caret,
+    Pipe,
+    
     Eof,
     Bad,
     Error,
@@ -73,14 +94,36 @@ impl Lexer {
             };
             
             let token = match c {
-                '(' => self.consume_single_char(TokenKind::LeftParen),
-                ')' => self.consume_single_char(TokenKind::RightParen),
-                '=' => self.consume_single_char(TokenKind::Equals),
-                '"' => self.consume_any_string(),
+                
                 '/' if self.peek_char() == Some('/') => {
                     self.skip_comments();
                     continue;
                 }
+                
+                '(' => self.consume_single_char(TokenKind::LeftParen),
+                ')' => self.consume_single_char(TokenKind::RightParen),
+                '{' => self.consume_single_char(TokenKind::CurlyLeft),
+                '}' => self.consume_single_char(TokenKind::CurlyRight),
+                '[' => self.consume_single_char(TokenKind::SquareLeft),
+                ']' => self.consume_single_char(TokenKind::SquareRight),
+                '<' => self.consume_single_char(TokenKind::AngledLeft),
+                '>' => self.consume_single_char(TokenKind::AngledRight),
+                '?' => self.consume_single_char(TokenKind::QuestionMark),
+                ':' => self.consume_single_char(TokenKind::Colon),
+                '=' => self.consume_single_char(TokenKind::Equals),
+                ',' => self.consume_single_char(TokenKind::Comma),
+                '!' => self.consume_single_char(TokenKind::Exclamation),
+                '&' => self.consume_single_char(TokenKind::Ampersand),
+                '+' => self.consume_single_char(TokenKind::Plus),
+                '-' => self.consume_single_char(TokenKind::Minus),
+                '*' => self.consume_single_char(TokenKind::Asterisk),
+                '/' => self.consume_single_char(TokenKind::Slash),
+                '.' => self.consume_single_char(TokenKind::Period),
+                '%' => self.consume_single_char(TokenKind::Percent),
+                '^' => self.consume_single_char(TokenKind::Caret),
+                '|' => self.consume_single_char(TokenKind::Pipe),
+                
+                '"' => self.consume_any_string(),
                 c if c.is_alphabetic() => self.consume_identifier(),
                 c if c.is_whitespace() => {
                     self.consume();
