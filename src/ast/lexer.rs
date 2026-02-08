@@ -46,7 +46,7 @@ pub struct TextSpan {
 impl TextSpan {
     pub fn new(start: usize, end: usize, line: usize, literal: String) -> Self {
         Self {
-            start,
+            start: start + 1,
             end,
             line,
             literal,
@@ -211,7 +211,7 @@ impl Lexer {
             TextSpan::new(start, self.current_pos, self.current_line, ch.to_string())
         )
     }
-
+    
     fn consume_identifier(&mut self) -> Token {
         let start = self.current_pos;
         let mut buffer = String::new();
@@ -256,7 +256,7 @@ impl Lexer {
         let start = self.current_pos;
         let quotes = self.count_consecutive_chars('"', 3);
 
-        self.consume_n_chars(quotes); 
+        self.consume_n_chars(quotes);
         
         let mut buffer = String::new();
         
@@ -267,7 +267,7 @@ impl Lexer {
                 (true, _) => break,
                 (_, true) => return Token::new(
                     TokenKind::Error,
-                    TextSpan::new(start, self.current_pos, self.current_line, 
+                    TextSpan::new(start, self.current_pos, self.current_line,
                         "Unterminated string".to_string())
                 ),
                 _ => {
@@ -284,17 +284,17 @@ impl Lexer {
             TextSpan::new(start, self.current_pos, self.current_line, buffer)
         )
     }
-
+    
     fn consume_error(&mut self) -> Token {
         let start = self.current_pos;
         let ch = self.consume().unwrap_or('\0');
         Token::new(
             TokenKind::Error,
-            TextSpan::new(start, self.current_pos, self.current_line, 
+            TextSpan::new(start, self.current_pos, self.current_line,
                 format!("Unexpected character: '{}'", ch))
         )
     }
-
+    
     fn count_consecutive_chars(&self, ch: char, max: usize) -> usize {
         (0..max)
             .filter(|&i| self.peek_char_by(i) == Some(ch))
