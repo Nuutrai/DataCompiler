@@ -1,6 +1,6 @@
-data<"https://github.com/Nuutrai/DataCompiler/std.dt"> = std
-data<"./lib.dt">
-data<std::io> = io
+data("https://github.com/Nuutrai/DataCompiler/std.dt") = std
+data("./lib.dt")
+data(std::io) = io
 
 data main() {
     data hi // Variable initialization
@@ -29,16 +29,16 @@ data main() {
 
 }
 
-data foreach(array: &data[], callback: &(data -> ())) {
+data <T> foreach(array: &T[], do: &(T -> ())) {
     {
-        !foreach(array, callback, 0, size(array))
+        !foreach(array, do, 0, size(array))
     }
 }
 
-data !foreach(array: &data[], callback: &(data -> ()), index: Integer, more: Integer) {
+data <T> !foreach(array: &T[], do: &(T -> ()), index: Integer, more: Integer) {
     {
-        &callback(&array[index])
-        index < (more - 1) ? !foreach(array, callback, index + 1, more - 1)
+        &do(&array[index])
+        index < (more - 1) ? !foreach(array, do, index + 1, more - 1)
     }
 }
 
