@@ -1,7 +1,8 @@
 use std::fs;
 use std::env;
 
-use crate::ast::lexer::Lexer;
+use crate::ast::lexer::{Lexer, Token};
+use crate::ast::parser::Parser;
 
 mod ast;
 
@@ -24,7 +25,10 @@ fn main() {
     let lexer = Lexer::new(input);
     let tokens = lexer.tokenize();
     
-    for token in tokens {
+    for token in &tokens {
         println!("{:?}", token);
     }
+
+    let parser = Parser::new(tokens);
+    parser.parse()
 }

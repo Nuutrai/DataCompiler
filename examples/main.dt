@@ -3,21 +3,21 @@ data<"./lib.dt">
 data<std::io> = io
 
 data main() {
-    data hi // Variable initialization
+    data hi // Allocation of memory with the size of 1 byte
     hi = 2 // Variable assignment
-    hi = hi + 1 // Illegal assignment as all variables are immutable
-    data hi2 = hi + 1
+    data hi = add(hi, 1) // Consumes the original hi in add, then allocates a new memory block for the result of add
+    data hi2 = add(hi, 1) // Consumes the second hi
 
     //          vvvvvvv Not necessary, but can be used
     data hello: data[5] = "Hello"
     //          ^^^^ Data when used as a type represents a byte
-    //              vvv This represents an array with size 6
+    //              vvv This represents a byte array with size 6
     data world: data[6] = "World!"
 
     data string: data[13]
     string[0] = 1 // Initialize the first byte of the string
 
-    string = hello + ", " + world // Illegal reassignment
+    string = concat_list_of([hello, ", ", world] // Illegal reassignment
 
     string[0] = 2 // Items in an array may be modified
 
@@ -50,6 +50,12 @@ data add(a: Integer, b: Integer) : Integer {
         a > b ? result : b
     } // Variables can be assigned to a block. This allows for a delayed evaluation of the block's result, and also returned the block's result as a value (able to be implicitly returned)
     a > b ? result : b // This will make the function return `result` or `b.value`
+}
+
+data x86-64$add_int(rdi: Integer, rsi: Integer) {
+    add rdi, rsi
+    mov rax, rdi
+    ret
 }
 
 data copy(source: &data[], destination: &data[], offset: Integer, length: Integer) {
