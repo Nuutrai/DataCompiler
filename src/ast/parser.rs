@@ -80,22 +80,23 @@ impl Parser {
             self.consume();
         }
 
-        let mut function = String::new();
+        // let mut function = String::new();
+        //
+        // let Some(literal) = self.current_token() else {
+        //     panic!("Whoa whoa whoa you messed up");
+        // };
+        //
+        // match &literal.kind {
+        //     TokenKind::Literal(literal) => {
+        //         function.push_str(literal.as_str());
+        //     }
+        //     _ => {}
+        // }
 
-        let Some(literal) = self.current_token() else {
-            panic!("Whoa whoa whoa you messed up");
-        };
 
-        match &literal.kind {
-            TokenKind::Literal(literal) => {
-                function.push_str(literal.as_str());
-            }
-            _ => {}
-        }
+        self.parse_function();
 
-        self.consume();
-
-        println!("ASM function for {} named {}", arch, function);
+        println!("ASM function for {} named ...", arch) // function);
     }
 
     fn parse_function(&mut self) {
@@ -116,6 +117,22 @@ impl Parser {
 
         self.consume();
 
+        // Argument time
+        if self.current_token().is_none() {
+            panic!("Incorrect function layout")
+        }
+
+        self.consume();
+
+        let mut arguments: Vec<&str> = Vec::new();
+
+        loop {
+            let Some(token) = self.current_token() else {
+                panic!("Incomplete function declaration");
+            };
+
+        }
+
         println!("Function {}", name);
     }
 
@@ -132,10 +149,7 @@ impl Parser {
             _ => {}
         }
 
-
-        // Argument stuff
         self.consume();
-
 
         println!("Variable {}", name);
     }
