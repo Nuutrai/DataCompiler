@@ -1,9 +1,10 @@
 use std::cmp;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TokenKind {
     Data,
-    Literal(String),
+    StringLiteral(String),
+    Identifier(String),
     Number(usize),
 
     RightParen,
@@ -31,6 +32,7 @@ pub enum TokenKind {
     Pipe,
     Dollar,
 
+    Newline,
     Eof,
     Bad,
     Error,
@@ -97,7 +99,7 @@ impl Lexer {
             };
 
             let token = match c {
-
+                '\n' => self.consume_single_char(TokenKind::Newline),
                 '/' if self.peek_char() == Some('/') => {
                     self.skip_comments();
                     continue;
@@ -144,7 +146,7 @@ impl Lexer {
     }
 
     fn skip_whitespace(&mut self) {
-        self.consume_while(None, |c| c.is_whitespace());
+        self.consume_while(None, |c| c == ' ' || c == '\t' || c == '\r');
     }
 
     fn skip_comments(&mut self) {
@@ -221,7 +223,7 @@ impl Lexer {
 
         let kind = match buffer.as_str() {
             "data" => TokenKind::Data,
-            _ => TokenKind::Literal(buffer.clone()),
+            _ => TokenKind::Identifier(buffer.clone()),
         };
 
         Token::new(kind, TextSpan::new(start, self.current_pos, self.current_line, buffer))
@@ -282,7 +284,7 @@ impl Lexer {
         self.consume_n_chars(quotes);
 
         Token::new(
-            TokenKind::Literal(buffer.clone()),
+            TokenKind::StringLiteral(buffer.clone()),
             TextSpan::new(start, self.current_pos, self.current_line, buffer)
         )
     }
@@ -304,57 +306,3 @@ impl Lexer {
             .max(1)
     }
 }
-
-    // pub fn next_token(&mut self) -> Option<Token> {
-    //     self.skip_whitespace();
-    //
-    //     if self.current_pos == self.input.len() {
-    //         return Some(Token::new(
-    //             Eof,
-    //             TextSpan::new(self.current_pos, self.current_pos, String::new()),
-    //         ));
-    //     }
-    //
-    //     let start = self.current_pos;
-    //     let c = self.current_char();
-    //     c.map(|c| {
-    //         let start = self.current_pos;
-    //         let mut kind = TokenKind::Bad;
-    //         if c.is_digit(10) {
-    //             let number = self.consume_number();
-    //             kind = TokenKind::Number(number)
-    //         }
-    //         let end = self.current_pos;
-    //         let literal = self.input[start..end].to_string();
-    //         let span = TextSpan::new(start, end, literal);
-    //         Token::new(kind, span)
-    //     })
-    // }
-    //
-    // fn is_number_start(c: &char) -> bool {
-    //     c.is_digit(10)
-    // }
-    //
-    // fn consume_number(&mut self) -> i64 {
-    //     let mut number: i64 = 0;
-    //
-    //     'greedy: loop {
-    //         match self.current_char() {
-    //             None => break 'greedy,
-    //             Some(_) => {
-    //                 if !self.current_char().unwrap().is_digit(10) {
-    //                     println!("NOOOO: {:?}", self.current_char());
-    //                     break 'greedy;
-    //                 }
-    //             }
-    //         }
-    //
-    //         let digit = self.consume().unwrap().to_digit(10);
-    //
-    //         println!("{:?}", digit);
-    //
-    //         number = number * 10 + digit.unwrap() as i64;
-    //     }
-    //
-    //     number
-    // }

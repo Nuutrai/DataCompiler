@@ -1,7 +1,7 @@
 use std::fs;
 use std::env;
 
-use crate::ast::lexer::{Lexer, Token};
+use crate::ast::lexer::Lexer;
 use crate::ast::parser::Parser;
 
 mod ast;
@@ -29,6 +29,6 @@ fn main() {
         println!("{:?}", token);
     }
 
-    let parser = Parser::new(tokens);
-    parser.parse()
+    let mut parser = Parser::new(tokens);
+    println!("{:?}", parser.parse());
 }

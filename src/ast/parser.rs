@@ -1,46 +1,26 @@
 use crate::ast::lexer::{Token, TokenKind};
 
 #[derive(Debug, Clone)]
+pub enum Type {
+    Named(String),
+}
+
+#[derive(Debug, Clone)]
 pub enum Expr {
     Number(usize),
     String(String),
     Identifier(String),
     Group(Box<Expr>),
-
-    Call {
-        callee: Box<Expr>,
-        args: Vec<Expr>,
-    },
-
-    Index {
-        target: Box<Expr>,
-        index: Box<Expr>,
-    },
-
-    Ternary {
-        cond: Box<Expr>,
-        then_branch: Box<Expr>,
-        else_branch: Box<Expr>,
-    },
+    Call { callee: Box<Expr>, args: Vec<Expr> },
+    Index { target: Box<Expr>, index: Box<Expr> },
+    Ternary { cond: Box<Expr>, then_branch: Box<Expr>, else_branch: Box<Expr> },
 }
 
 #[derive(Debug, Clone)]
 pub enum Stmt {
-    Function {
-        name: String,
-        args: Vec<String>,
-        body: Vec<Stmt>,
-    },
-    AsmFunction {
-        arch: String,
-        name: String,
-        args: Vec<String>,
-        body: Vec<Stmt>,
-    },
-    Variable {
-        name: String,
-        value: Expr,
-    },
+    Function { name: String, args: Vec<(String, Type)>, body: Vec<Stmt> },
+    AsmFunction { arch: String, name: String, args: Vec<(String, Type)>, body: String },
+    Variable { name: String, value: Expr },
     Expr(Expr),
 }
 
@@ -55,17 +35,11 @@ impl Parser {
     }
 
     fn current(&self) -> &TokenKind {
-        self.tokens
-            .get(self.pos)
-            .map(|t| &t.kind)
-            .unwrap_or(&TokenKind::Eof)
+        self.tokens.get(self.pos).map(|t| &t.kind).unwrap_or(&TokenKind::Eof)
     }
 
     fn peek_by(&self, by: usize) -> &TokenKind {
-        self.tokens
-            .get(self.pos + by)
-            .map(|t| &t.kind)
-            .unwrap_or(&TokenKind::Eof)
+        self.tokens.get(self.pos + by).map(|t| &t.kind).unwrap_or(&TokenKind::Eof)
     }
 
     fn advance(&mut self) {
@@ -97,13 +71,22 @@ impl Parser {
         matches!(self.current(), TokenKind::Eof)
     }
 
+    fn expect_identifier(&mut self) -> String {
+        match self.current().clone() {
+            TokenKind::Identifier(s) => { self.advance(); s }
+            other => panic!("Expected identifier, got {:?}", other),
+        }
+    }
+
+    fn current_literal(&self) -> String {
+        self.tokens.get(self.pos).map(|t| t.span.literal.clone()).unwrap_or_default()
+    }
+
     pub fn parse(&mut self) -> Vec<Stmt> {
         let mut stmts = Vec::new();
         loop {
             self.skip_newlines();
-            if self.is_at_end() {
-                break;
-            }
+            if self.is_at_end() { break; }
             stmts.push(self.parse_stmt());
         }
         stmts
@@ -111,22 +94,22 @@ impl Parser {
 
     fn parse_stmt(&mut self) -> Stmt {
         match self.current().clone() {
-            TokenKind::Data => {
-                match self.peek_by(2) {
-                    TokenKind::LeftParen => self.parse_function(),
-                    TokenKind::Equals => self.parse_variable(),
-                    _ => self.parse_asm_function(),
-                }
-            }
-            _ => {
-                let expr = self.parse_expr();
-                Stmt::Expr(expr)
-            }
+            TokenKind::Data => self.parse_data(),
+            _ => Stmt::Expr(self.parse_expr()),
+        }
+    }
+
+    fn parse_data(&mut self) -> Stmt {
+        self.advance();
+
+        match self.peek_by(1) {
+            TokenKind::LeftParen => self.parse_function(),
+            TokenKind::Equals    => self.parse_variable(),
+            _                    => self.parse_asm_function(),
         }
     }
 
     fn parse_function(&mut self) -> Stmt {
-        self.advance();
         let name = self.expect_identifier();
         self.expect(&TokenKind::LeftParen);
         let args = self.parse_param_list();
@@ -134,37 +117,36 @@ impl Parser {
         Stmt::Function { name, args, body }
     }
 
-    fn parse_asm_function(&mut self) -> Stmt {
-        self.advance();
-        let mut arch = String::new();
-        while !matches!(self.current(), TokenKind::Dollar | TokenKind::Eof) {
-            arch.push_str(&self.current_literal());
-            self.advance();
-        }
-        self.match_kind(&TokenKind::Dollar);
-        let name = self.expect_identifier();
-        self.expect(&TokenKind::LeftParen);
-        let args = self.parse_param_list();
-        let body = self.parse_body();
-        Stmt::AsmFunction { arch, name, args, body }
-    }
-
     fn parse_variable(&mut self) -> Stmt {
-        self.advance();
         let name = self.expect_identifier();
         self.expect(&TokenKind::Equals);
         let value = self.parse_expr();
         Stmt::Variable { name, value }
     }
 
-    fn parse_param_list(&mut self) -> Vec<String> {
+    fn parse_asm_function(&mut self) -> Stmt {
+        let mut arch = String::new();
+        while !matches!(self.current(), TokenKind::Dollar | TokenKind::Eof) {
+            arch.push_str(&self.current_literal());
+            self.advance();
+        }
+        self.expect(&TokenKind::Dollar);
+        let name = self.expect_identifier();
+        self.expect(&TokenKind::LeftParen);
+        let args = self.parse_param_list();
+        let body = self.parse_asm_body();
+        Stmt::AsmFunction { arch, name, args, body }
+    }
+
+    fn parse_param_list(&mut self) -> Vec<(String, Type)> {
         let mut params = Vec::new();
         if !self.match_kind(&TokenKind::RightParen) {
             loop {
-                params.push(self.expect_identifier());
-                if self.match_kind(&TokenKind::RightParen) {
-                    break;
-                }
+                let name = self.expect_identifier();
+                self.expect(&TokenKind::Colon);
+                let ty = Type::Named(self.expect_identifier());
+                params.push((name, ty));
+                if self.match_kind(&TokenKind::RightParen) { break; }
                 self.expect(&TokenKind::Comma);
             }
         }
@@ -176,29 +158,31 @@ impl Parser {
         let mut stmts = Vec::new();
         loop {
             self.skip_newlines();
-            if self.match_kind(&TokenKind::CurlyRight) || self.is_at_end() {
-                break;
-            }
+            if self.match_kind(&TokenKind::CurlyRight) || self.is_at_end() { break; }
             stmts.push(self.parse_stmt());
         }
         stmts
     }
 
-    fn expect_identifier(&mut self) -> String {
-        match self.current().clone() {
-            TokenKind::Identifier(s) => {
-                self.advance();
-                s
+    fn parse_asm_body(&mut self) -> String {
+        self.expect(&TokenKind::CurlyLeft);
+        let mut body = String::new();
+        loop {
+            match self.current() {
+                TokenKind::CurlyRight | TokenKind::Eof => { self.advance(); break; }
+                TokenKind::Newline => { body.push('\n'); self.advance(); }
+                TokenKind::Comma => { body.push_str(", "); self.advance(); }
+                _ => {
+                    body.push_str(&self.current_literal());
+                    let next = self.tokens.get(self.pos + 1).map(|t| &t.kind);
+                    if !matches!(next, Some(TokenKind::Newline) | Some(TokenKind::Comma) | None) {
+                        body.push(' ');
+                    }
+                    self.advance();
+                }
             }
-            other => panic!("Expected identifier, got {:?}", other),
         }
-    }
-
-    fn current_literal(&self) -> String {
-        self.tokens
-            .get(self.pos)
-            .map(|t| t.span.literal.clone())
-            .unwrap_or_default()
+        body.trim().to_string()
     }
 
     pub fn parse_expr(&mut self) -> Expr {
@@ -209,9 +193,7 @@ impl Parser {
                 if !self.match_kind(&TokenKind::RightParen) {
                     loop {
                         args.push(self.parse_expr());
-                        if self.match_kind(&TokenKind::RightParen) {
-                            break;
-                        }
+                        if self.match_kind(&TokenKind::RightParen) { break; }
                         self.match_kind(&TokenKind::Comma);
                     }
                 }
@@ -242,9 +224,9 @@ impl Parser {
 
     fn parse_primary(&mut self) -> Expr {
         match self.current().clone() {
-            TokenKind::Number(n) => { self.advance(); Expr::Number(n) }
+            TokenKind::Number(n)       => { self.advance(); Expr::Number(n) }
             TokenKind::StringLiteral(s) => { self.advance(); Expr::String(s) }
-            TokenKind::Identifier(s) => { self.advance(); Expr::Identifier(s) }
+            TokenKind::Identifier(s)   => { self.advance(); Expr::Identifier(s) }
             TokenKind::LeftParen => {
                 self.advance();
                 let expr = self.parse_expr();
