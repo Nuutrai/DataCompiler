@@ -1,0 +1,5 @@
+data x86-64$add_int(rdi: Integer, rsi: Integer) {
+    add rdi, rsi
+    mov rax, rdi
+    ret
+}

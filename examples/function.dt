@@ -1,0 +1,10 @@
+data xyz() { }
+
+data hi = 2
+
+data x86-64$add_int(rdi: Integer, rsi: Integer) {
+
+    mov rax, rdi
+    add rax, rsi
+
+}

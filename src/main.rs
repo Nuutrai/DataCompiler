@@ -1,7 +1,7 @@
 use std::fs;
 use std::env;
 
-use crate::ast::lexer::Lexer;
+use crate::ast::lexer::{Lexer, Token};
 use crate::ast::parser::Parser;
 
 mod ast;
@@ -21,16 +21,14 @@ fn main() {
             eprintln!("Error reading file '{}': {}", filename, err);
             std::process::exit(1);
         });
+    
     let lexer = Lexer::new(input);
     let tokens = lexer.tokenize();
-    let mut parser = Parser::new(tokens);
-    loop {
-        parser.skip_newlines();
-        if parser.is_at_end() {
-            break;
-        }
-        let expr = parser.parse_expr();
-        println!("{:#?}", expr);
-        parser.skip_newlines();
+    
+    for token in &tokens {
+        println!("{:?}", token);
     }
+
+    let parser = Parser::new(tokens);
+    parser.parse()
 }
