@@ -17,8 +17,8 @@ pub enum Expr {
 }
 
 #[derive(Debug, Clone)]
-pub enum Stmt {
-    Function { name: String, args: Vec<(String, Type)>, body: Vec<Stmt> },
+pub enum Statement {
+    Function { name: String, args: Vec<(String, Type)>, body: Vec<Statement> },
     AsmFunction { arch: String, name: String, args: Vec<(String, Type)>, body: String },
     Variable { name: String, value: Expr },
     Expr(Expr),
@@ -82,24 +82,24 @@ impl Parser {
         self.tokens.get(self.pos).map(|t| t.span.literal.clone()).unwrap_or_default()
     }
 
-    pub fn parse(&mut self) -> Vec<Stmt> {
-        let mut stmts = Vec::new();
+    pub fn parse(&mut self) -> Vec<Statement> {
+        let mut statements = Vec::new();
         loop {
             self.skip_newlines();
             if self.is_at_end() { break; }
-            stmts.push(self.parse_stmt());
+            statements.push(self.parse_statement());
         }
-        stmts
+        statements
     }
 
-    fn parse_stmt(&mut self) -> Stmt {
+    fn parse_statement(&mut self) -> Statement {
         match self.current().clone() {
             TokenKind::Data => self.parse_data(),
-            _ => Stmt::Expr(self.parse_expr()),
+            _ => Statement::Expr(self.parse_expr()),
         }
     }
 
-    fn parse_data(&mut self) -> Stmt {
+    fn parse_data(&mut self) -> Statement {
         self.advance();
 
         match self.peek_by(1) {
@@ -109,22 +109,22 @@ impl Parser {
         }
     }
 
-    fn parse_function(&mut self) -> Stmt {
+    fn parse_function(&mut self) -> Statement {
         let name = self.expect_identifier();
         self.expect(&TokenKind::LeftParen);
         let args = self.parse_param_list();
         let body = self.parse_body();
-        Stmt::Function { name, args, body }
+        Statement::Function { name, args, body }
     }
 
-    fn parse_variable(&mut self) -> Stmt {
+    fn parse_variable(&mut self) -> Statement {
         let name = self.expect_identifier();
         self.expect(&TokenKind::Equals);
         let value = self.parse_expr();
-        Stmt::Variable { name, value }
+        Statement::Variable { name, value }
     }
 
-    fn parse_asm_function(&mut self) -> Stmt {
+    fn parse_asm_function(&mut self) -> Statement {
         let mut arch = String::new();
         while !matches!(self.current(), TokenKind::Dollar | TokenKind::Eof) {
             arch.push_str(&self.current_literal());
@@ -135,7 +135,7 @@ impl Parser {
         self.expect(&TokenKind::LeftParen);
         let args = self.parse_param_list();
         let body = self.parse_asm_body();
-        Stmt::AsmFunction { arch, name, args, body }
+        Statement::AsmFunction { arch, name, args, body }
     }
 
     fn parse_param_list(&mut self) -> Vec<(String, Type)> {
@@ -153,15 +153,15 @@ impl Parser {
         params
     }
 
-    fn parse_body(&mut self) -> Vec<Stmt> {
+    fn parse_body(&mut self) -> Vec<Statement> {
         self.expect(&TokenKind::CurlyLeft);
-        let mut stmts = Vec::new();
+        let mut statements = Vec::new();
         loop {
             self.skip_newlines();
             if self.match_kind(&TokenKind::CurlyRight) || self.is_at_end() { break; }
-            stmts.push(self.parse_stmt());
+            statements.push(self.parse_statement());
         }
-        stmts
+        statements
     }
 
     fn parse_asm_body(&mut self) -> String {
