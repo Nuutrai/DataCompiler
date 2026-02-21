@@ -1,2 +1,2 @@
 pub mod lexer;
-mod paser;
+pub mod parser;

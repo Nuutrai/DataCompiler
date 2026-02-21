@@ -1,0 +1,2 @@
+foo(arr[i * 2], x > 0 ? x : -x) + bar(a & b)
+foo(1, 2)
