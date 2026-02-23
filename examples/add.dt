@@ -1,4 +1,4 @@
-data x86-64$add_int(rdi: Integer, rsi: Integer) {
+data x86-64$add_int(a: data[4], b: data[4]) {
     add rdi, rsi
     mov rax, rdi
     ret

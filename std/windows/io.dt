@@ -1,0 +1,4 @@
+data x86-64$print(rcx: data[]) {
+    .extern puts
+    jmp puts
+}
