@@ -1,5 +1,3 @@
-use std::cmp;
-
 #[derive(Debug, Clone)]
 pub enum TokenKind {
     Data,
@@ -38,7 +36,7 @@ pub enum TokenKind {
     Error,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TextSpan {
     pub(crate) start: usize,
     pub(crate) end: usize,
@@ -82,7 +80,7 @@ pub(crate) struct Lexer {
 impl Lexer {
     pub fn new(input: String) -> Self {
         Self {
-            input,
+            input: input.replace("\r\n", "\n"),
             current_pos: 0,
             current_line: 1,
         }
@@ -95,7 +93,7 @@ impl Lexer {
             self.skip_whitespace();
 
             let Some(c) = self.current_char() else {
-                break; // end of input
+                break;
             };
 
             let token = match c {
@@ -182,10 +180,12 @@ impl Lexer {
     }
 
     fn consume_while<F>(&mut self, mut buffer: Option<&mut String>, predicate: F)
-    where F: Fn(char) -> bool
+    where
+        F: Fn(char) -> bool,
     {
-        while let Some(c) = self.current_char() && predicate(c) {
-
+        while let Some(c) = self.current_char()
+            && predicate(c)
+        {
             self.consume();
 
             if let Some(ref mut buf) = buffer {
@@ -193,18 +193,20 @@ impl Lexer {
             } else {
                 continue;
             };
-
         }
     }
 
     fn consume_until<F>(&mut self, buffer: Option<&mut String>, predicate: F)
-    where F: Fn(char) -> bool
+    where
+        F: Fn(char) -> bool,
     {
         self.consume_while(buffer, |c| !predicate(c))
     }
 
     fn consume_n_chars(&mut self, n: usize) {
-        (0..n).for_each(|_| { self.consume(); });
+        (0..n).for_each(|_| {
+            self.consume();
+        });
     }
 
     fn consume_single_char(&mut self, kind: TokenKind) -> Token {
@@ -212,7 +214,7 @@ impl Lexer {
         let ch = self.consume().unwrap();
         Token::new(
             kind,
-            TextSpan::new(start, self.current_pos, self.current_line, ch.to_string())
+            TextSpan::new(start, self.current_pos, self.current_line, ch.to_string()),
         )
     }
 
@@ -226,19 +228,20 @@ impl Lexer {
             _ => TokenKind::Identifier(buffer.clone()),
         };
 
-        Token::new(kind, TextSpan::new(start, self.current_pos, self.current_line, buffer))
+        Token::new(
+            kind,
+            TextSpan::new(start, self.current_pos, self.current_line, buffer),
+        )
     }
 
     fn consume_number(&mut self) -> Token {
-
         let start = self.current_pos;
         let mut buffer = String::new();
         while let Some(_) = self.current_char() {
-
             self.consume_while(Some(&mut buffer), |c| c.is_digit(10));
 
             if self.current_char() != Some('_') {
-                break
+                break;
             }
 
             self.consume();
@@ -247,13 +250,14 @@ impl Lexer {
         let mut number: usize = 0;
 
         for c in buffer.chars() {
-
             number *= 10;
             number += c.to_digit(10).unwrap() as usize;
-
         }
 
-        Token::new(TokenKind::Number(number), TextSpan::new(start, self.current_pos, self.current_line, buffer))
+        Token::new(
+            TokenKind::Number(number),
+            TextSpan::new(start, self.current_pos, self.current_line, buffer),
+        )
     }
 
     fn consume_any_string(&mut self) -> Token {
@@ -267,13 +271,19 @@ impl Lexer {
         while let Some(c) = self.current_char() {
             let at_closing = (0..quotes).all(|i| self.peek_char_by(i) == Some('"'));
 
-            match (at_closing, quotes == 1 && c == '\n') {
+            match (at_closing, quotes == 1 && (c == '\n' || c == '\r')) {
                 (true, _) => break,
-                (_, true) => return Token::new(
-                    TokenKind::Error,
-                    TextSpan::new(start, self.current_pos, self.current_line,
-                        "Unterminated string".to_string())
-                ),
+                (_, true) => {
+                    return Token::new(
+                        TokenKind::Error,
+                        TextSpan::new(
+                            start,
+                            self.current_pos,
+                            self.current_line,
+                            "Unterminated string".to_string(),
+                        ),
+                    );
+                }
                 _ => {
                     buffer.push(c);
                     self.consume();
@@ -285,7 +295,7 @@ impl Lexer {
 
         Token::new(
             TokenKind::StringLiteral(buffer.clone()),
-            TextSpan::new(start, self.current_pos, self.current_line, buffer)
+            TextSpan::new(start, self.current_pos, self.current_line, buffer),
         )
     }
 
@@ -294,14 +304,18 @@ impl Lexer {
         let ch = self.consume().unwrap_or('\0');
         Token::new(
             TokenKind::Error,
-            TextSpan::new(start, self.current_pos, self.current_line,
-                format!("Unexpected character: '{}'", ch))
+            TextSpan::new(
+                start,
+                self.current_pos,
+                self.current_line,
+                format!("Unexpected character: '{}'", ch),
+            ),
         )
     }
 
     fn count_consecutive_chars(&self, ch: char, max: usize) -> usize {
         (0..max)
-            .filter(|&i| self.peek_char_by(i) == Some(ch))
+            .take_while(|&i| self.peek_char_by(i) == Some(ch))
             .count()
             .max(1)
     }

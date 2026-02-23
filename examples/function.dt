@@ -1,10 +1,8 @@
-data xyz() { }
+data("std::io")
 
-data hi = 2
+data var: data[4] = "Hello World"
 
-data x86-64$add_int(rdi: Integer, rsi: Integer) {
-
-    mov rax, rdi
-    add rax, rsi
-
+data main() {
+    print(var)
+    0
 }
