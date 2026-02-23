@@ -347,10 +347,14 @@ impl Codegen {
 
     fn gen_assign_index(&mut self, name: &str, index: &Expr, val: Value) -> Value {
         let idx = self.gen_expr(index);
+        let prefix = match self.scope.lookup(name) {
+            Some((_, Storage::Global)) => "@",
+            _ => "%",
+        };
         let gep = self.emitter.fresh();
         self.emitter.emit(&format!(
-            "  {} = getelementptr i8, ptr %{}, i64 {}",
-            gep, name, idx.name
+            "  {} = getelementptr i8, ptr {}{}, i64 {}",
+            gep, prefix, name, idx.name
         ));
         self.emitter
             .emit(&format!("  store i8 {}, ptr {}", val.name, gep));

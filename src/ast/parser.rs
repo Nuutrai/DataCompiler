@@ -509,6 +509,10 @@ impl Parser {
                 self.advance();
                 Expr::String(s, span)
             }
+            TokenKind::Char(b) => {
+                self.advance();
+                Expr::Number(b as usize, span)
+            }
             TokenKind::Identifier(s) => {
                 self.advance();
                 Expr::Identifier(s, span)

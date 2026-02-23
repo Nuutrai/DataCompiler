@@ -3,6 +3,7 @@ data("std::io")
 data var: data[4] = "Hello World"
 
 data main() {
+    var[3] = 'o'
     print(var)
     0
 }
