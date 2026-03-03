@@ -27,6 +27,8 @@ impl TypeResolver {
             },
             Type::Data => Some(Type::Data),
             Type::DataArray(n) => Some(Type::DataArray(*n)),
+            Type::Ref(inner) => Some(Type::Ref(Box::new(self.resolve(inner)?))),
+            Type::Generic(n, ps) => Some(Type::Generic(n.clone(), ps.clone())),
         }
     }
 
@@ -35,6 +37,8 @@ impl TypeResolver {
             Type::Data => Some("i8".to_string()),
             Type::DataArray(0) => Some("ptr".to_string()),
             Type::DataArray(n) => Some(format!("[{} x i8]", n)),
+            Type::Ref(_) => Some("ptr".to_string()),
+            Type::Generic(n, _) => Some(format!("%struct.{}", n)),
             Type::Named(_) => unreachable!(),
         }
     }

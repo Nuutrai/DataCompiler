@@ -1,5 +1,5 @@
-data x86-64$add_int(a: data[4], b: data[4]) {
-    add rdi, rsi
-    mov rax, rdi
+data x86-64$add_int(a: data, b: data) {
+    add rcx, rdx
+    mov rax, rcx
     ret
 }

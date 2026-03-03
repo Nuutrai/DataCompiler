@@ -1,0 +1,10 @@
+data Point {
+    x: data
+    y: data
+}
+
+data main() {
+    data p: Point = { x: 10, y: 20 }
+    data n: Integer = 42
+    0
+}
