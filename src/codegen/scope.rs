@@ -7,10 +7,17 @@ pub enum Storage {
     Global,
 }
 
+#[derive(Debug, Clone)]
+pub struct StructDef {
+    pub fields: Vec<(String, Type)>,
+    pub generics: Vec<String>,
+}
+
 pub struct ScopeStack {
     scopes: Vec<HashMap<String, Type>>,
     global_types: HashMap<String, Type>,
     global_symbols: HashSet<String>,
+    pub structs: HashMap<String, StructDef>,
 }
 
 impl ScopeStack {
@@ -19,6 +26,7 @@ impl ScopeStack {
             scopes: vec![HashMap::new()],
             global_types: HashMap::new(),
             global_symbols: HashSet::new(),
+            structs: HashMap::new(),
         }
     }
 
@@ -73,5 +81,40 @@ impl ScopeStack {
             return Some((ty.clone(), Storage::Global));
         }
         None
+    }
+
+    pub fn register_struct(
+        &mut self,
+        name: &str,
+        generics: Vec<String>,
+        fields: Vec<(String, Type)>,
+    ) {
+        self.structs
+            .insert(name.to_string(), StructDef { fields, generics });
+    }
+
+    pub fn get_struct(&self, name: &str) -> Option<&StructDef> {
+        self.structs.get(name)
+    }
+
+    pub fn field_offset(&self, struct_name: &str, field: &str) -> Option<(usize, Type)> {
+        let def = self.structs.get(struct_name)?;
+        let mut offset = 0;
+        for (fname, ftype) in &def.fields {
+            if fname == field {
+                return Some((offset, ftype.clone()));
+            }
+            offset += field_size(ftype);
+        }
+        None
+    }
+}
+
+pub fn field_size(ty: &Type) -> usize {
+    match ty {
+        Type::Data => 1,
+        Type::DataArray(n) => *n,
+        Type::Ref(_) => 8,
+        _ => 1,
     }
 }

@@ -1,8 +1,12 @@
 data("std::io")
+data("examples/add.dt")
 
-data var: data[4] = "Hello World"
+data msg: data[13] = "Hello  World "
 
 data main() {
-    print(var)
+    data twenty_two = 22
+    msg[5] = add_int(twenty_two, 22)
+    msg[12] = '!'
+    print(msg)
     0
 }

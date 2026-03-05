@@ -4,6 +4,7 @@ pub enum TokenKind {
     StringLiteral(String),
     Identifier(String),
     Number(usize),
+    Char(u8),
 
     RightParen,
     LeftParen,
@@ -127,6 +128,7 @@ impl Lexer {
                 '|' => self.consume_single_char(TokenKind::Pipe),
                 '$' => self.consume_single_char(TokenKind::Dollar),
 
+                '\'' => self.consume_char_literal(),
                 '"' => self.consume_any_string(),
                 c if c.is_alphabetic() => self.consume_identifier(),
                 c if c.is_digit(10) => self.consume_number(),
@@ -218,6 +220,69 @@ impl Lexer {
         )
     }
 
+    fn consume_escape(&mut self) -> Option<u8> {
+        self.consume(); // consume the backslash
+        match self.current_char() {
+            Some('n') => {
+                self.consume();
+                Some(b'\n')
+            }
+            Some('t') => {
+                self.consume();
+                Some(b'\t')
+            }
+            Some('r') => {
+                self.consume();
+                Some(b'\r')
+            }
+            Some('0') => {
+                self.consume();
+                Some(b'\0')
+            }
+            Some('\\') => {
+                self.consume();
+                Some(b'\\')
+            }
+            Some('\'') => {
+                self.consume();
+                Some(b'\'')
+            }
+            _ => None,
+        }
+    }
+
+    fn consume_char_literal(&mut self) -> Token {
+        let start = self.current_pos;
+        self.consume(); // opening '
+
+        let ch = match self.current_char() {
+            Some('\\') => match self.consume_escape() {
+                Some(b) => b,
+                None => return self.error_token(start, "Unknown escape sequence"),
+            },
+            Some(c) if c != '\'' => {
+                let b = c as u8;
+                self.consume();
+                b
+            }
+            _ => return self.error_token(start, "Empty character literal"),
+        };
+
+        if self.current_char() != Some('\'') {
+            return self.error_token(start, "Unterminated character literal");
+        }
+        self.consume(); // closing '
+        Token::new(
+            TokenKind::Char(ch),
+            TextSpan::new(
+                start,
+                self.current_pos,
+                self.current_line,
+                (ch as char).to_string(),
+            ),
+        )
+    }
+
     fn consume_identifier(&mut self) -> Token {
         let start = self.current_pos;
         let mut buffer = String::new();
@@ -302,14 +367,13 @@ impl Lexer {
     fn consume_error(&mut self) -> Token {
         let start = self.current_pos;
         let ch = self.consume().unwrap_or('\0');
+        self.error_token(start, &format!("Unexpected character: '{}'", ch))
+    }
+
+    fn error_token(&mut self, start: usize, msg: &str) -> Token {
         Token::new(
             TokenKind::Error,
-            TextSpan::new(
-                start,
-                self.current_pos,
-                self.current_line,
-                format!("Unexpected character: '{}'", ch),
-            ),
+            TextSpan::new(start, self.current_pos, self.current_line, msg.to_string()),
         )
     }
 

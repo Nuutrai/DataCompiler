@@ -1,10 +1,12 @@
 use crate::{
-    ast::lexer::TextSpan,
-    ast::parser::{AssignTarget, Expr, Statement, Type},
+    ast::{
+        lexer::TextSpan,
+        parser::{AssignTarget, Expr, Statement, Type},
+    },
     codegen::{
         compiler::Compiler,
         emitter::Emitter,
-        scope::{ScopeStack, Storage},
+        scope::{ScopeStack, Storage, field_size},
         type_resolver::TypeResolver,
         value::Value,
     },
@@ -95,6 +97,7 @@ impl Codegen {
             match stmt {
                 Statement::Function { name, .. } => self.scope.register_symbol(name),
                 Statement::AsmFunction { name, .. } => self.scope.register_symbol(name),
+                Statement::Struct { name, .. } => self.scope.register_symbol(name),
                 Statement::Variable { name, ty, .. } => {
                     if let Some(t) = ty {
                         self.scope.insert_global(name, t.clone());
@@ -144,6 +147,12 @@ impl Codegen {
             Statement::Expr(e) => {
                 self.gen_expr(e);
             }
+            Statement::Struct {
+                name,
+                generics,
+                fields,
+                ..
+            } => self.gen_struct(name, generics, fields),
             Statement::Assign { .. } => {}
         }
     }
@@ -194,6 +203,66 @@ impl Codegen {
                 .join("\n")
         );
         self.compiler.add_asm(format!("{}.s", name), asm_body);
+    }
+
+    fn gen_field(&mut self, target: &Expr, field: &str, span: &TextSpan) -> Value {
+        let ptr = self.gen_expr(target);
+
+        let struct_name = match self.expr_struct_name(target) {
+            Some(n) => n,
+            None => {
+                self.errors.error_no_loc(ErrorKind::UnsupportedFeature(
+                    "field access on non-struct type".to_string(),
+                ));
+                return Value::new("0", "i8");
+            }
+        };
+
+        let (offset, field_ty) = match self.scope.field_offset(&struct_name, field) {
+            Some(r) => r,
+            None => {
+                self.errors.error(
+                    ErrorKind::NotDefined(format!("{}.{}", struct_name, field)),
+                    span.line,
+                    span.start,
+                    field.len(),
+                );
+                return Value::new("0", "i8");
+            }
+        };
+
+        let llvm_ty = self.llvm_type(&field_ty);
+        let gep = self.emitter.fresh();
+        let tmp = self.emitter.fresh();
+        self.emitter.emit(&format!(
+            "  {} = getelementptr i8, ptr {}, i64 {}",
+            gep, ptr.name, offset
+        ));
+        self.emitter
+            .emit(&format!("  {} = load {}, ptr {}", tmp, llvm_ty, gep));
+        Value::new(&tmp, &llvm_ty)
+    }
+
+    fn gen_struct(&mut self, name: &str, generics: &[String], fields: &[(String, Type)]) {
+        self.scope
+            .register_struct(name, generics.to_vec(), fields.to_vec());
+
+        let total_size: usize = fields.iter().map(|(_, t)| field_size(t)).sum();
+        self.emitter.emit_global(&format!(
+            "%struct.{} = type {{ [{} x i8] }}",
+            name, total_size
+        ));
+    }
+
+    fn expr_struct_name(&self, expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Identifier(name, _) => match self.scope.lookup(name) {
+                Some((Type::Named(n), _)) => Some(n),
+                Some((Type::Generic(n, _), _)) => Some(n),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     fn gen_import(&mut self, path: &str) {
@@ -280,6 +349,7 @@ impl Codegen {
                 value,
                 span,
             } => self.gen_assign(target, value, span),
+            Statement::Struct { .. } => Value::new("0", "i8"),
             Statement::Expr(e) => self.gen_expr(e),
             _ => Value::new("0", "i8"),
         }
@@ -347,10 +417,14 @@ impl Codegen {
 
     fn gen_assign_index(&mut self, name: &str, index: &Expr, val: Value) -> Value {
         let idx = self.gen_expr(index);
+        let prefix = match self.scope.lookup(name) {
+            Some((_, Storage::Global)) => "@",
+            _ => "%",
+        };
         let gep = self.emitter.fresh();
         self.emitter.emit(&format!(
-            "  {} = getelementptr i8, ptr %{}, i64 {}",
-            gep, name, idx.name
+            "  {} = getelementptr i8, ptr {}{}, i64 {}",
+            gep, prefix, name, idx.name
         ));
         self.emitter
             .emit(&format!("  store i8 {}, ptr {}", val.name, gep));
@@ -365,6 +439,11 @@ impl Codegen {
             Expr::String(s, _) => self.gen_string(s),
             Expr::Identifier(name, span) => self.gen_identifier(name, span),
             Expr::Group(inner, _) => self.gen_expr(inner),
+            Expr::Field {
+                target,
+                field,
+                span,
+            } => self.gen_field(target, field, span),
             Expr::Call { callee, args, .. } => self.gen_call(callee, args),
             Expr::Ternary {
                 cond,
@@ -421,6 +500,20 @@ impl Codegen {
                 self.emitter
                     .emit(&format!("  {} = load i8, ptr {}{}", tmp, prefix, name));
                 Value::new(&tmp, "i8")
+            }
+            Type::Ref(_) => {
+                let tmp = self.emitter.fresh();
+                self.emitter
+                    .emit(&format!("  {} = load ptr, ptr {}{}", tmp, prefix, name));
+                Value::new(&tmp, "ptr")
+            }
+            Type::Generic(n, _) => {
+                let tmp = self.emitter.fresh();
+                self.emitter.emit(&format!(
+                    "  {} = getelementptr %struct.{}, ptr {}{}, i32 0, i32 0",
+                    tmp, n, prefix, name
+                ));
+                Value::new(&tmp, "ptr")
             }
             Type::Named(n) => todo!("named type: {}", n),
         }

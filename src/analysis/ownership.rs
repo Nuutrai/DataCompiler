@@ -27,22 +27,18 @@ impl OwnershipChecker {
                 self.check_expr(value);
                 self.scope.insert(name.clone(), true);
             }
-
             Statement::Function { args, body, .. } => {
                 for (name, _) in args {
                     self.scope.insert(name.clone(), true);
                 }
                 self.check(body);
             }
-
-            Statement::Expr(e) => {
-                self.check_expr(e);
-            }
-            _ => {}
-
-            Statement::Assign { target, value, .. } => {
+            Statement::Assign { value, .. } => {
                 self.check_expr(value);
             }
+            Statement::Struct { .. } => {}
+            Statement::Expr(e) => self.check_expr(e),
+            _ => {}
         }
     }
 
@@ -62,6 +58,8 @@ impl OwnershipChecker {
             },
 
             Expr::Group(inner, _) => self.check_expr(inner),
+
+            Expr::Field { target, .. } => self.check_expr(target),
 
             Expr::Call { callee, args, .. } => {
                 self.check_expr(callee);

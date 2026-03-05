@@ -8,6 +8,8 @@ pub enum Type {
     Data,
     DataArray(usize),
     Named(String),
+    Ref(Box<Type>),
+    Generic(String, Vec<Type>),
 }
 
 #[derive(Debug, Clone)]
@@ -32,6 +34,11 @@ pub enum Expr {
         else_branch: Box<Expr>,
         span: TextSpan,
     },
+    Field {
+        target: Box<Expr>,
+        field: String,
+        span: TextSpan,
+    },
 }
 
 impl Expr {
@@ -41,6 +48,7 @@ impl Expr {
             Expr::String(_, s) => s,
             Expr::Identifier(_, s) => s,
             Expr::Group(_, s) => s,
+            Expr::Field { span, .. } => span,
             Expr::Call { span, .. } => span,
             Expr::Index { span, .. } => span,
             Expr::Ternary { span, .. } => span,
@@ -72,6 +80,12 @@ pub enum Statement {
     Assign {
         target: AssignTarget,
         value: Expr,
+        span: TextSpan,
+    },
+    Struct {
+        name: String,
+        generics: Vec<String>,
+        fields: Vec<(String, Type)>,
         span: TextSpan,
     },
     Expr(Expr),
@@ -210,7 +224,8 @@ impl Parser {
                 Statement::Function { .. }
                 | Statement::AsmFunction { .. }
                 | Statement::Import { .. }
-                | Statement::Variable { .. } => {}
+                | Statement::Variable { .. }
+                | Statement::Struct { .. } => {}
                 _ => {
                     self.errors.error(
                         ErrorKind::UnexpectedToken {
@@ -269,7 +284,6 @@ impl Parser {
 
     fn parse_data(&mut self) -> Statement {
         self.advance();
-
         match self.current() {
             TokenKind::LeftParen => {
                 let span = self.span();
@@ -279,7 +293,19 @@ impl Parser {
                         self.advance();
                         s
                     }
-                    other => panic!("Expected import path, got {:?}", other),
+                    other => {
+                        let span = self.span();
+                        self.errors.error(
+                            ErrorKind::UnexpectedToken {
+                                expected: "import path".to_string(),
+                                got: format!("{:?}", other),
+                            },
+                            span.line,
+                            span.start,
+                            span.len(),
+                        );
+                        String::new()
+                    }
                 };
                 self.expect(&TokenKind::RightParen);
                 Statement::Import(path, span)
@@ -288,6 +314,8 @@ impl Parser {
                 TokenKind::LeftParen => self.parse_function(),
                 TokenKind::Equals => self.parse_variable(),
                 TokenKind::Colon => self.parse_variable(),
+                TokenKind::AngledLeft => self.parse_struct(), // data Foo<T> {
+                TokenKind::CurlyLeft => self.parse_struct(),  // data Foo {
                 _ => self.parse_asm_function(),
             },
         }
@@ -347,7 +375,10 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> Type {
-        let _is_ref = self.match_kind(&TokenKind::Ampersand);
+        if self.match_kind(&TokenKind::Ampersand) {
+            return Type::Ref(Box::new(self.parse_type()));
+        }
+
         match self.current().clone() {
             TokenKind::Data => {
                 self.advance();
@@ -365,7 +396,24 @@ impl Parser {
                     Type::Data
                 }
             }
-            TokenKind::Identifier(_) => Type::Named(self.expect_identifier()),
+            TokenKind::Identifier(_) => {
+                let name = self.expect_identifier();
+                if self.match_kind(&TokenKind::AngledLeft) {
+                    let mut params = Vec::new();
+                    if !self.match_kind(&TokenKind::AngledRight) {
+                        loop {
+                            params.push(self.parse_type());
+                            if self.match_kind(&TokenKind::AngledRight) {
+                                break;
+                            }
+                            self.expect(&TokenKind::Comma);
+                        }
+                    }
+                    Type::Generic(name, params)
+                } else {
+                    Type::Named(name)
+                }
+            }
             other => {
                 let span = self.span();
                 self.errors.error(
@@ -379,6 +427,48 @@ impl Parser {
                 );
                 Type::Data
             }
+        }
+    }
+
+    fn parse_struct(&mut self) -> Statement {
+        let span = self.span();
+        let name = self.expect_identifier();
+
+        let generics = if self.match_kind(&TokenKind::AngledLeft) {
+            let mut params = Vec::new();
+            if !self.match_kind(&TokenKind::AngledRight) {
+                loop {
+                    params.push(self.expect_identifier());
+                    if self.match_kind(&TokenKind::AngledRight) {
+                        break;
+                    }
+                    self.expect(&TokenKind::Comma);
+                }
+            }
+            params
+        } else {
+            Vec::new()
+        };
+
+        self.expect(&TokenKind::CurlyLeft);
+        let mut fields = Vec::new();
+        loop {
+            self.skip_newlines();
+            if self.match_kind(&TokenKind::CurlyRight) || self.is_at_end() {
+                break;
+            }
+            let fname = self.expect_identifier();
+            self.expect(&TokenKind::Colon);
+            let ftype = self.parse_type();
+            fields.push((fname, ftype));
+            self.skip_newlines();
+        }
+
+        Statement::Struct {
+            name,
+            generics,
+            fields,
+            span,
         }
     }
 
@@ -508,6 +598,10 @@ impl Parser {
             TokenKind::StringLiteral(s) => {
                 self.advance();
                 Expr::String(s, span)
+            }
+            TokenKind::Char(b) => {
+                self.advance();
+                Expr::Number(b as usize, span)
             }
             TokenKind::Identifier(s) => {
                 self.advance();
