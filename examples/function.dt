@@ -1,7 +1,7 @@
 data("std::io")
 data("examples/add.dt")
 
-data msg: data[15] = "Hello  World aa"
+data msg: data[15] = "Hello  World "
 
 data main() {
     data twenty_two: data16 = 22
