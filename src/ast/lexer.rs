@@ -81,7 +81,7 @@ pub(crate) struct Lexer {
 impl Lexer {
     pub fn new(input: String) -> Self {
         Self {
-            input: input.replace("\r\n", "\n"),
+            input: input.replace("\r\n", "\n").trim().to_string(),
             current_pos: 0,
             current_line: 1,
         }
@@ -130,7 +130,7 @@ impl Lexer {
 
                 '\'' => self.consume_char_literal(),
                 '"' => self.consume_any_string(),
-                c if c.is_alphabetic() => self.consume_identifier(),
+                c if c.is_alphabetic() || c.eq(&'_') => self.consume_identifier(),
                 c if c.is_digit(10) => self.consume_number(),
                 c if c.is_whitespace() => {
                     self.consume();

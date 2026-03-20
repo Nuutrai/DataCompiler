@@ -194,7 +194,7 @@ impl Codegen {
             .emit(&format!("declare i8 @{}({})", name, arg_types.join(", ")));
         self.emitter.emit("");
         let asm_body = format!(
-            "    .intel_syntax noprefix\n    .globl {}\n{}:\n{}\n    .att_syntax prefix",
+            "    .intel_syntax noprefix\n    .text\n.globl _{}\n_{}:\n{}\n    .att_syntax prefix",
             name,
             name,
             body.lines()

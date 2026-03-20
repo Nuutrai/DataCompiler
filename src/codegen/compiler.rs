@@ -7,6 +7,8 @@ pub struct AsmOutput {
 
 pub struct Compiler {
     libs: Vec<&'static str>,
+    linker_options: Vec<&'static str>,
+    os_flags: Vec<&'static str>,
     asm_outputs: Vec<AsmOutput>,
 }
 
@@ -14,13 +16,25 @@ impl Compiler {
     pub fn new() -> Self {
         let libs = if cfg!(target_os = "windows") {
             vec!["-lkernel32", "-Wl,-subsystem,console"]
+        let mut libs = Vec::new();
+        let mut os_flags = Vec::new();
+        let mut linker_options = Vec::new();
+        // linker_options.push("-v");
+        if cfg!(target_os = "windows") {
+            libs.push("-lkernel32");
+            linker_options.push("-Wl,-subsystem,console");
+            // libs.push("-Wl,-subsystem,console");
         } else if cfg!(target_os = "macos") {
-            vec!["-lSystem"]
+            // libs.push("-lSystem");
+            // linker_options.push("-Wl,-e,main");
+            os_flags.push("-masm=intel");
         } else {
-            vec!["-lc"]
-        };
+            libs.push("-lc");
+        }
         Self {
             libs,
+            linker_options,
+            os_flags,
             asm_outputs: Vec::new(),
         }
     }
@@ -33,6 +47,8 @@ impl Compiler {
         std::fs::write("out.ll", ir).unwrap();
         Command::new("clang")
             .args(["-c", "out.ll", "-o", "out.o"])
+            .args(self.os_flags.clone())
+            .args(["-Woverride-module", "-c", "out.ll", "-o", "out.o"])
             .status()
             .expect("IR compile failed");
         let obj_files = self.compile_asm();
@@ -45,6 +61,7 @@ impl Compiler {
             std::fs::write(&asm.path, &asm.body).unwrap();
             let obj = asm.path.replace(".s", ".o");
             Command::new("clang")
+                .args(self.os_flags.clone())
                 .args(["-c", &asm.path, "-o", &obj])
                 .status()
                 .expect("ASM compile failed");
@@ -62,6 +79,10 @@ impl Compiler {
             cmd.arg(lib);
         }
         cmd.arg("-o").arg(out);
+        cmd
+            .args(self.linker_options.clone())
+            .arg("-o")
+            .arg(out);
         cmd.status().expect("Link failed");
     }
 }

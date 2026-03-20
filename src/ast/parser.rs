@@ -164,7 +164,7 @@ impl Parser {
     }
 
     pub fn is_at_end(&self) -> bool {
-        matches!(self.current(), TokenKind::Eof)
+        matches!(self.current(), TokenKind::Eof) || self.pos == self.tokens.len() - 1
     }
 
     fn expect_identifier(&mut self) -> String {
@@ -199,15 +199,8 @@ impl Parser {
     fn span(&self) -> TextSpan {
         self.tokens
             .get(self.pos)
-            .map(|t| {
-                TextSpan::new(
-                    t.span.start,
-                    t.span.end,
-                    t.span.line,
-                    t.span.literal.clone(),
-                )
-            })
-            .unwrap_or(TextSpan::new(0, 0, 0, String::new()))
+            .unwrap_or(&Token::new(TokenKind::Eof, TextSpan::new(0, 0, 0, String::from("Error: Invaid token"))))
+            .span.clone()
     }
 
     pub fn parse(&mut self) -> Vec<Statement> {
