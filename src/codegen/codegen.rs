@@ -20,17 +20,19 @@ pub struct Codegen {
     compiler: Compiler,
     types: TypeResolver,
     imported: HashSet<String>,
+    target: String,
     pub errors: ErrorReporter,
 }
 
 impl Codegen {
-    pub fn new(file: &str) -> Self {
+    pub fn new(file: &str, target: &str) -> Self {
         Self {
             emitter: Emitter::new(),
             scope: ScopeStack::new(),
-            compiler: Compiler::new(),
+            compiler: Compiler::new(target),
             types: TypeResolver::new(),
             imported: HashSet::new(),
+            target: target.to_string(),
             errors: ErrorReporter::new(file),
         }
     }
@@ -80,7 +82,8 @@ impl Codegen {
         }
         let (globals, output) = self.emitter.finish_ref();
         let mut result = String::new();
-        result.push_str("target triple = \"x86_64-w64-windows-gnu\"\n\n");
+        //TODO Add target?
+        result.push_str(format!("target triple = \"{}\"\n\n", self.target).as_str());
         result.push_str("declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)\n");
         result.push_str(globals);
         result.push('\n');
@@ -89,14 +92,14 @@ impl Codegen {
     }
 
     pub fn compile_to_binary(&self, ir: &str, out: &str) {
-        self.compiler.compile(ir, out);
+        self.compiler.compile(ir, out, self.target.as_str());
     }
 
     fn register_globals(&mut self, stmts: &[Statement]) {
         for stmt in stmts {
             match stmt {
                 Statement::Function { name, .. } => self.scope.register_symbol(name),
-                Statement::AsmFunction { name, .. } => self.scope.register_symbol(name),
+                Statement::AsmFunction { arch, name, .. } if arch.eq(&self.target) => self.scope.register_symbol(name),
                 Statement::Struct { name, .. } => self.scope.register_symbol(name),
                 Statement::Variable { name, ty, .. } => {
                     if let Some(t) = ty {
@@ -116,9 +119,9 @@ impl Codegen {
         }
         let parts: Vec<&str> = path.split("::").collect();
         match parts.as_slice() {
-            ["std", "common", rest @ ..] => format!("std/common/{}.dt", rest.join("/")),
-            ["std", module] => format!("std/{}/{}.dt", Self::platform(), module),
-            ["std", rest @ ..] => format!("std/{}/{}.dt", Self::platform(), rest.join("/")),
+            // ["std", "common", rest @ ..] => format!("std/common/{}.dt", rest.join("/")),
+            ["std", module] => format!("std/{}.dt", module),
+            ["std", rest @ ..] => format!("std/{}.dt", rest.join("/")),
             _ => path.to_string(),
         }
     }
@@ -138,8 +141,8 @@ impl Codegen {
                 name, args, body, ..
             } => self.gen_function(name, args, body),
             Statement::AsmFunction {
-                name, args, body, ..
-            } => self.gen_asm_function(name, args, body),
+                arch, name, args, body, ..
+            } if (arch.eq(&self.target)) => self.gen_asm_function(name, args, body),
             Statement::Import(path, ..) => self.gen_import(path),
             Statement::Variable {
                 name, ty, value, ..
@@ -154,6 +157,7 @@ impl Codegen {
                 ..
             } => self.gen_struct(name, generics, fields),
             Statement::Assign { .. } => {}
+            _ => {}
         }
     }
 

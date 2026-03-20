@@ -1,5 +1,5 @@
-data x86-64$add_int(a: data, b: data) {
-    add rcx, rdx
-    mov rax, rcx
+data x86_64-apple-darwin$add_int(a: data, b: data) {
+    mov rax, rdi
+    add rax, rsi
     ret
 }

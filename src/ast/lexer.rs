@@ -67,7 +67,7 @@ pub struct Token {
 }
 
 impl Token {
-    fn new(kind: TokenKind, span: TextSpan) -> Token {
+    pub fn new(kind: TokenKind, span: TextSpan) -> Token {
         Token { kind, span }
     }
 }
