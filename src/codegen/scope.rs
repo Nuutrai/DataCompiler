@@ -112,8 +112,8 @@ impl ScopeStack {
 
 pub fn field_size(ty: &Type) -> usize {
     match ty {
-        Type::Data => 1,
-        Type::DataArray(n) => *n,
+        Type::Data(bits) => (1 * (bits / 8)) as usize,
+        Type::DataArray(bits, n) => *n * (bits / 8) as usize,
         Type::Ref(_) => 8,
         _ => 1,
     }

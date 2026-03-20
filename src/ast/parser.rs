@@ -5,8 +5,8 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub enum Type {
-    Data,
-    DataArray(usize),
+    Data(u8),
+    DataArray(u8, usize),
     Named(String),
     Ref(Box<Type>),
     Generic(String, Vec<Type>),
@@ -67,7 +67,7 @@ pub enum Statement {
     AsmFunction {
         arch: String,
         name: String,
-        args: Vec<(String, Type)>,
+        args: Vec<Type>,
         body: String,
         span: TextSpan,
     },
@@ -238,7 +238,7 @@ impl Parser {
 
     fn parse_statement(&mut self) -> Statement {
         match self.current().clone() {
-            TokenKind::Data => self.parse_data(),
+            TokenKind::Data(_) => self.parse_data(),
             TokenKind::Identifier(name) => match self.peek_by(1) {
                 TokenKind::Equals => self.parse_assign(),
                 TokenKind::SquareLeft => self.parse_index_assign(),
@@ -328,6 +328,7 @@ impl Parser {
         }
     }
 
+    // TODO Should we make this not have an optional type?
     fn parse_variable(&mut self) -> Statement {
         let span = self.span();
         let name = self.expect_identifier();
@@ -356,7 +357,7 @@ impl Parser {
         self.expect(&TokenKind::Dollar);
         let name = self.expect_identifier();
         self.expect(&TokenKind::LeftParen);
-        let args = self.parse_param_list();
+        let args = self.parse_asm_param_list();
         let body = self.parse_asm_body();
         Statement::AsmFunction {
             arch,
@@ -373,7 +374,7 @@ impl Parser {
         }
 
         match self.current().clone() {
-            TokenKind::Data => {
+            TokenKind::Data(bits) => {
                 self.advance();
                 if self.match_kind(&TokenKind::SquareLeft) {
                     let size = match self.current().clone() {
@@ -384,9 +385,9 @@ impl Parser {
                         _ => 0,
                     };
                     self.expect(&TokenKind::SquareRight);
-                    Type::DataArray(size)
+                    Type::DataArray(bits.unwrap_or(8), size)
                 } else {
-                    Type::Data
+                    Type::Data(bits.unwrap_or(8))
                 }
             }
             TokenKind::Identifier(_) => {
@@ -418,7 +419,7 @@ impl Parser {
                     span.start,
                     span.len(),
                 );
-                Type::Data
+                Type::Data(8)
             }
         }
     }
@@ -465,6 +466,7 @@ impl Parser {
         }
     }
 
+    // TODO Look into making the two param list functions into one with an asm argument :p
     fn parse_param_list(&mut self) -> Vec<(String, Type)> {
         let mut params = Vec::new();
         if !self.match_kind(&TokenKind::RightParen) {
@@ -473,6 +475,21 @@ impl Parser {
                 self.expect(&TokenKind::Colon);
                 let ty = self.parse_type();
                 params.push((name, ty));
+                if self.match_kind(&TokenKind::RightParen) {
+                    break;
+                }
+                self.expect(&TokenKind::Comma);
+            }
+        }
+        params
+    }
+    
+    fn parse_asm_param_list(&mut self) -> Vec<Type> {
+        let mut params = Vec::new();
+        if !self.match_kind(&TokenKind::RightParen) {
+            loop {
+                let ty = self.parse_type();
+                params.push(ty);
                 if self.match_kind(&TokenKind::RightParen) {
                     break;
                 }
