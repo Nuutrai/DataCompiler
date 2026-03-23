@@ -61,6 +61,7 @@ pub enum Statement {
     Function {
         name: String,
         args: Vec<(String, Type)>,
+        returns: Type,
         body: Vec<Statement>,
         span: TextSpan,
     },
@@ -68,6 +69,7 @@ pub enum Statement {
         arch: String,
         name: String,
         args: Vec<Type>,
+        returns: Type,
         body: String,
         span: TextSpan,
     },
@@ -319,10 +321,13 @@ impl Parser {
         let name = self.expect_identifier();
         self.expect(&TokenKind::LeftParen);
         let args = self.parse_param_list();
+        self.expect(&TokenKind::Colon);
+        let returns = self.parse_type();
         let body = self.parse_body();
         Statement::Function {
             name,
             args,
+            returns,
             body,
             span,
         }
@@ -358,11 +363,14 @@ impl Parser {
         let name = self.expect_identifier();
         self.expect(&TokenKind::LeftParen);
         let args = self.parse_asm_param_list();
+        self.expect(&TokenKind::Colon);
+        let returns = self.parse_type();
         let body = self.parse_asm_body();
         Statement::AsmFunction {
             arch,
             name,
             args,
+            returns,
             body,
             span,
         }
