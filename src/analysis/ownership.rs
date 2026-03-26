@@ -82,7 +82,8 @@ impl OwnershipChecker {
                 self.check_expr_read(cond);
                 self.check_expr(then_branch);
                 self.check_expr(else_branch);
-            }
+            },
+            Expr::Pointer(inner, _) => self.check_expr(inner)
         }
     }
 

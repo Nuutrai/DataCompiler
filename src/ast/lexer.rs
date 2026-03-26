@@ -80,6 +80,7 @@ pub(crate) struct Lexer {
     current_line: usize,
 }
 
+// TODO Add support for 0x, 0b, etc.
 impl Lexer {
     pub fn new(input: String) -> Self {
         Self {

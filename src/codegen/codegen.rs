@@ -13,6 +13,7 @@ use crate::{
     error::{ErrorKind, ErrorReporter},
 };
 use std::collections::HashSet;
+use crate::codegen::scope::SymbolType;
 
 pub struct Codegen {
     emitter: Emitter,
@@ -97,14 +98,22 @@ impl Codegen {
     fn register_globals(&mut self, stmts: &[Statement]) {
         for stmt in stmts {
             match stmt {
-                Statement::Function { name, .. } => self.scope.register_symbol(name),
-                Statement::AsmFunction { arch, name, .. } if arch.eq(&self.target) => self.scope.register_symbol(name),
-                Statement::Struct { name, .. } => self.scope.register_symbol(name),
+                Statement::Function { name, returns, .. } => self.scope.register_symbol(name, returns),
+                Statement::AsmFunction { arch, name, returns, .. } if arch.eq(&self.target) => {
+                    self.scope.register_symbol(
+                        name,
+                        match returns {
+                            Some(_) => returns,
+                            None => &Some(Type::Void)
+                        }
+                    )
+                },
+                Statement::Struct { name, .. } => self.scope.register_symbol(name, &None),
                 Statement::Variable { name, ty, .. } => {
                     if let Some(t) = ty {
                         self.scope.insert_global(name, t.clone());
                     } else {
-                        self.scope.register_symbol(name);
+                        self.scope.register_symbol(name, &None);
                     }
                 }
                 _ => {}
@@ -137,11 +146,11 @@ impl Codegen {
     fn gen_statement(&mut self, stmt: &Statement) {
         match stmt {
             Statement::Function {
-                name, args, body, ..
-            } => self.gen_function(name, args, body),
+                name, args, returns, body, ..
+            } => self.gen_function(name, args, returns, body),
             Statement::AsmFunction {
-                arch, name, args, body, ..
-            } if (arch.eq(&self.target)) => self.gen_asm_function(name, args, body),
+                arch, name, args, returns, body, ..
+            } if (arch.eq(&self.target)) => self.gen_asm_function(name, args, returns, body),
             Statement::Import(path, ..) => self.gen_import(path),
             Statement::Variable {
                 name, ty, value, ..
@@ -160,8 +169,14 @@ impl Codegen {
         }
     }
 
-    fn gen_function(&mut self, name: &str, args: &[(String, Type)], body: &[Statement]) {
-        self.scope.register_symbol(name);
+    fn gen_function(&mut self, name: &str, args: &[(String, Type)], returns: &Option<Type>, body: &[Statement]) {
+        self.scope.register_symbol(
+            name,
+            match returns {
+                Some(_) => returns,
+                None => &Some(Type::Void)
+            }
+        );
         self.scope.clear_locals();
         let arg_str: Vec<String> = args
             .iter()
@@ -171,8 +186,14 @@ impl Codegen {
                 format!("{} %{}_arg", ty, n)
             })
             .collect();
+        let returns = self.llvm_type(
+            match returns {
+                Some(ty) => ty,
+                None => &Type::Void
+            }
+        );
         self.emitter
-            .emit(&format!("define i8 @{}({}) {{", name, arg_str.join(", "))); // TODO i8
+            .emit(&format!("define {} @{}({}) {{", returns, name, arg_str.join(", ")));
         self.emitter.emit("entry:");
         for (n, t) in args {
             let ty = self.llvm_type(t);
@@ -180,21 +201,39 @@ impl Codegen {
             self.emitter
                 .emit(&format!("  store {} %{}_arg, ptr %{}", ty, n, n));
         }
-        let mut last = Value::new("0", "i8"); // TODO i8
+        let mut last = Value::new("0", &returns);
         for s in body {
             last = self.gen_stmt_inner(s);
         }
+        if returns == "void" {
+            self.emitter
+                .emit(&format!("  ret {}", returns));
+
+        } else {
         self.emitter
-            .emit(&format!("  ret {} {}", last.ty, last.name));
+            .emit(&format!("  ret {} {}", returns, last.name));
+        }
         self.emitter.emit("}");
         self.emitter.emit("");
     }
 
-    fn gen_asm_function(&mut self, name: &str, args: &[Type], body: &str) {
-        self.scope.register_symbol(name);
+    fn gen_asm_function(&mut self, name: &str, args: &[Type], returns: &Option<Type>, body: &str) {
+        self.scope.register_symbol(
+            name,
+            match returns {
+                Some(_) => returns,
+                None => &Some(Type::Void)
+            }
+        );
         let arg_types: Vec<String> = args.iter().map(|(t)| self.llvm_type(t)).collect();
+        let returns = self.llvm_type(
+            match returns {
+                Some(ty) => ty,
+                None => &Type::Void
+            }
+        );
         self.emitter
-            .emit(&format!("declare i8 @{}({})", name, arg_types.join(", "))); // TODO i8
+            .emit(&format!("declare {} @{}({})", returns, name, arg_types.join(", ")));
         self.emitter.emit("");
         let asm_body = format!(
             "    .intel_syntax noprefix\n    .text\n.globl _{}\n_{}:\n{}\n    .att_syntax prefix",
@@ -285,7 +324,7 @@ impl Codegen {
         if let Some(t) = ty {
             self.scope.insert_global(name, t.clone());
         } else {
-            self.scope.register_symbol(name);
+            self.scope.register_symbol(name, &None);
         }
         match ty {
             Some(Type::DataArray(bits, n)) => {
@@ -404,6 +443,7 @@ impl Codegen {
         }
     }
 
+    // TODO When we run into issues with Void, we'll edit this
     fn gen_assign_var(&mut self, name: &str, val: Value, span: &TextSpan) -> Value {
         let ty = match self.scope.lookup(name) {
             Some((t, _)) => t,
@@ -455,6 +495,9 @@ impl Codegen {
                 ..
             } => self.gen_ternary(cond, then_branch, else_branch),
             Expr::Index { target, index, .. } => self.gen_index(target, index),
+            Expr::Pointer(e, _) => {
+                self.gen_ptr(e)
+            },
         }
     }
 
@@ -504,6 +547,12 @@ impl Codegen {
                     .emit(&format!("  {} = load i{}, ptr {}{}", tmp, bits, prefix, name));
                 Value::new(&tmp, format!("i{}", bits).as_str())
             }
+            Type::Pointer(inner) => {
+                let tmp = self.emitter.fresh();
+                self.emitter
+                    .emit(&format!("  {} = load ptr, ptr {}{}", tmp, prefix, name));
+                Value::new(&tmp, "ptr")
+            },
             Type::Ref(_) => {
                 let tmp = self.emitter.fresh();
                 self.emitter
@@ -518,8 +567,43 @@ impl Codegen {
                 ));
                 Value::new(&tmp, "ptr")
             }
+            Type::Void => {
+                Value::new("0", "void")
+            }
             Type::Named(n) => todo!("named type: {}", n),
         }
+    }
+
+    fn gen_ptr(&mut self, inner: &Expr) -> Value {
+        match inner {
+            Expr::Identifier(name, span) => {
+                match self.scope.lookup(name) {
+                    Some((ty, storage)) => {
+                        // let tmp = self.emitter.fresh();
+                        // self.emitter.emit(&format!(
+                        //     "  {} = alloca ptr \n  store ptr %{}, ptr {}", tmp, name, tmp
+                        // ));
+                        Value::new(&format!("{}{name}", match storage { Storage::Global => "@", _ => "%" }), "ptr")
+                    }
+                    None => {
+                        self.err_not_defined(name, span);
+                        Value::new("0", "i8") // TODO i8
+                    }
+                }
+            }
+            _ => {
+
+                let expr = self.gen_expr(inner);
+
+                let tmp = self.emitter.fresh();
+                self.emitter.emit(&format!(
+                    "  {} = alloca {} \n  store {} {}, ptr {}", tmp, expr.ty, expr.ty, expr.name, tmp
+                ));
+
+                Value::new(&tmp, "ptr")
+            }
+        }
+
     }
 
     fn gen_call(&mut self, callee: &Expr, args: &[Expr]) -> Value {
@@ -538,14 +622,36 @@ impl Codegen {
                 return Value::new("0", "i8"); // TODO i8
             }
         };
-        let tmp = self.emitter.fresh();
-        self.emitter.emit(&format!(
-            "  {} = call i8 @{}({})",
-            tmp,
-            name,
-            arg_vals.join(", ")
-        ));
-        Value::new(&tmp, "i8") // TODO i8
+        let returns = match self.scope.get_symbol_type(&name) {
+            Some(symty) => {
+                match symty {
+                    SymbolType::Typed(ty) => ty,
+                    SymbolType::Untyped => &Type::Data(8),
+                }
+            },
+            None => &Type::Data(8),
+        };
+        let ty = self.types.llvm_type(returns).unwrap_or("i8".to_string());
+        if ty == "void" {
+            self.emitter.emit(&format!(
+                "  call {} @{}({})",
+                ty,
+                name,
+                arg_vals.join(", ")
+            ));
+            Value::new("0", &ty)
+
+        } else {
+            let tmp = self.emitter.fresh();
+            self.emitter.emit(&format!(
+                "  {} = call {} @{}({})",
+                tmp,
+                ty,
+                name,
+                arg_vals.join(", ")
+            ));
+            Value::new(&tmp, &ty)
+        }
     }
 
     fn gen_ternary(&mut self, cond: &Expr, then_b: &Expr, else_b: &Expr) -> Value {

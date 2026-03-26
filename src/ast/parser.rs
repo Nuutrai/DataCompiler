@@ -9,7 +9,9 @@ pub enum Type {
     DataArray(u8, usize),
     Named(String),
     Ref(Box<Type>),
+    Pointer(Box<Type>),
     Generic(String, Vec<Type>),
+    Void,
 }
 
 #[derive(Debug, Clone)]
@@ -17,6 +19,7 @@ pub enum Expr {
     Number(usize, TextSpan),
     String(String, TextSpan),
     Identifier(String, TextSpan),
+    Pointer(Box<Expr>, TextSpan),
     Group(Box<Expr>, TextSpan),
     Call {
         callee: Box<Expr>,
@@ -46,6 +49,7 @@ impl Expr {
         match self {
             Expr::Number(_, s) => s,
             Expr::String(_, s) => s,
+            Expr::Pointer(_, s) => s,
             Expr::Identifier(_, s) => s,
             Expr::Group(_, s) => s,
             Expr::Field { span, .. } => span,
@@ -61,6 +65,7 @@ pub enum Statement {
     Function {
         name: String,
         args: Vec<(String, Type)>,
+        returns: Option<Type>,
         body: Vec<Statement>,
         span: TextSpan,
     },
@@ -68,6 +73,7 @@ pub enum Statement {
         arch: String,
         name: String,
         args: Vec<Type>,
+        returns: Option<Type>,
         body: String,
         span: TextSpan,
     },
@@ -319,10 +325,18 @@ impl Parser {
         let name = self.expect_identifier();
         self.expect(&TokenKind::LeftParen);
         let args = self.parse_param_list();
+
+        let returns = if !self.match_kind(&TokenKind::Colon) {
+            None
+        } else {
+            Some(self.parse_type())
+        };
+        
         let body = self.parse_body();
         Statement::Function {
             name,
             args,
+            returns,
             body,
             span,
         }
@@ -358,20 +372,28 @@ impl Parser {
         let name = self.expect_identifier();
         self.expect(&TokenKind::LeftParen);
         let args = self.parse_asm_param_list();
+        
+        let returns = if !self.match_kind(&TokenKind::Colon) {
+            None
+        } else {
+            Some(self.parse_type())
+        };
+        
         let body = self.parse_asm_body();
         Statement::AsmFunction {
             arch,
             name,
             args,
+            returns,
             body,
             span,
         }
     }
 
     fn parse_type(&mut self) -> Type {
-        if self.match_kind(&TokenKind::Ampersand) {
-            return Type::Ref(Box::new(self.parse_type()));
-        }
+        // if self.match_kind(&TokenKind::Ampersand) {
+        //     return Type::Ref(Box::new(self.parse_type()));
+        // }
 
         match self.current().clone() {
             TokenKind::Data(bits) => {
@@ -386,8 +408,14 @@ impl Parser {
                     };
                     self.expect(&TokenKind::SquareRight);
                     Type::DataArray(bits.unwrap_or(8), size)
+                } else if self.match_kind(&TokenKind::Ampersand) {
+                    Type::Pointer(Box::from(Type::Data(bits.unwrap_or(8))))
                 } else {
-                    Type::Data(bits.unwrap_or(8))
+                    if bits == Some(0) {
+                        Type::Void
+                    } else {
+                        Type::Data(bits.unwrap_or(8))
+                    }
                 }
             }
             TokenKind::Identifier(_) => {
@@ -483,7 +511,7 @@ impl Parser {
         }
         params
     }
-    
+
     fn parse_asm_param_list(&mut self) -> Vec<Type> {
         let mut params = Vec::new();
         if !self.match_kind(&TokenKind::RightParen) {
@@ -612,6 +640,11 @@ impl Parser {
             TokenKind::Char(b) => {
                 self.advance();
                 Expr::Number(b as usize, span)
+            }
+            TokenKind::Ampersand => {
+                self.advance();
+                let expr = self.parse_expr();
+                Expr::Pointer(Box::new(expr), span)
             }
             TokenKind::Identifier(s) => {
                 self.advance();

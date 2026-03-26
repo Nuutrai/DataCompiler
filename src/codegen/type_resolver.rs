@@ -27,8 +27,10 @@ impl TypeResolver {
             },
             Type::Data(bits) => Some(Type::Data(*bits)),
             Type::DataArray(bits, n) => Some(Type::DataArray(*bits, *n)),
+            Type::Void => Some(Type::Void),
             Type::Ref(inner) => Some(Type::Ref(Box::new(self.resolve(inner)?))),
             Type::Generic(n, ps) => Some(Type::Generic(n.clone(), ps.clone())),
+            Type::Pointer(inner) => Some(Type::Pointer(Box::new(self.resolve(inner)?))),
         }
     }
 
@@ -37,9 +39,11 @@ impl TypeResolver {
             Type::Data(bits) => Some(format!("i{}", bits).to_string()),
             Type::DataArray(bits, 0) => Some("ptr".to_string()),
             Type::DataArray(bits, n) => Some(format!("[{} x i{}]", n, bits)),
+            Type::Void => Some("void".to_string()),
             Type::Ref(_) => Some("ptr".to_string()),
             Type::Generic(n, _) => Some(format!("%struct.{}", n)),
             Type::Named(_) => unreachable!(),
+            Type::Pointer(_) => Some("ptr".to_string()),
         }
     }
 }
