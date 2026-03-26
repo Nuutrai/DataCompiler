@@ -1,0 +1,25 @@
+data main() {
+    data obj: data16 = 11_324
+    data ptr: data& = &obj
+    write(&get_at_index(ptr, 0), 3)
+    0
+}
+
+data x86_64-apple-darwin$get_at_index(data&, data): data {
+    add rdi, rsi
+    mov al, byte ptr [rdi]
+    ret
+}
+
+data x86_64-apple-darwin$write(data&, data) {
+    mov byte ptr [rdi + 1], 10
+    mov byte ptr [rdi + 2], 0
+
+    mov rdx, rsi
+    mov rsi, rdi
+    mov rdi, 1
+    mov rax, 33_554_436
+    syscall
+
+    ret
+}

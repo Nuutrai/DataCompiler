@@ -13,6 +13,7 @@ use crate::{
     error::{ErrorKind, ErrorReporter},
 };
 use std::collections::HashSet;
+use crate::codegen::scope::SymbolType;
 
 pub struct Codegen {
     emitter: Emitter,
@@ -20,17 +21,19 @@ pub struct Codegen {
     compiler: Compiler,
     types: TypeResolver,
     imported: HashSet<String>,
+    target: String,
     pub errors: ErrorReporter,
 }
 
 impl Codegen {
-    pub fn new(file: &str) -> Self {
+    pub fn new(file: &str, target: &str) -> Self {
         Self {
             emitter: Emitter::new(),
             scope: ScopeStack::new(),
-            compiler: Compiler::new(),
+            compiler: Compiler::new(target),
             types: TypeResolver::new(),
             imported: HashSet::new(),
+            target: target.to_string(),
             errors: ErrorReporter::new(file),
         }
     }
@@ -39,7 +42,7 @@ impl Codegen {
         self.types.llvm_type(ty).unwrap_or_else(|| {
             self.errors
                 .error_no_loc(ErrorKind::UnknownType(format!("{:?}", ty)));
-            "i8".to_string()
+            "i8".to_string() // TODO i8
         })
     }
 
@@ -80,8 +83,8 @@ impl Codegen {
         }
         let (globals, output) = self.emitter.finish_ref();
         let mut result = String::new();
-        result.push_str("target triple = \"x86_64-w64-windows-gnu\"\n\n");
-        result.push_str("declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)\n");
+        result.push_str(format!("target triple = \"{}\"\n\n", self.target).as_str());
+        result.push_str("declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)\n"); // TODO i64
         result.push_str(globals);
         result.push('\n');
         result.push_str(output);
@@ -89,20 +92,28 @@ impl Codegen {
     }
 
     pub fn compile_to_binary(&self, ir: &str, out: &str) {
-        self.compiler.compile(ir, out);
+        self.compiler.compile(ir, out, self.target.as_str());
     }
 
     fn register_globals(&mut self, stmts: &[Statement]) {
         for stmt in stmts {
             match stmt {
-                Statement::Function { name, .. } => self.scope.register_symbol(name),
-                Statement::AsmFunction { name, .. } => self.scope.register_symbol(name),
-                Statement::Struct { name, .. } => self.scope.register_symbol(name),
+                Statement::Function { name, returns, .. } => self.scope.register_symbol(name, returns),
+                Statement::AsmFunction { arch, name, returns, .. } if arch.eq(&self.target) => {
+                    self.scope.register_symbol(
+                        name,
+                        match returns {
+                            Some(_) => returns,
+                            None => &Some(Type::Void)
+                        }
+                    )
+                },
+                Statement::Struct { name, .. } => self.scope.register_symbol(name, &None),
                 Statement::Variable { name, ty, .. } => {
                     if let Some(t) = ty {
                         self.scope.insert_global(name, t.clone());
                     } else {
-                        self.scope.register_symbol(name);
+                        self.scope.register_symbol(name, &None);
                     }
                 }
                 _ => {}
@@ -116,9 +127,9 @@ impl Codegen {
         }
         let parts: Vec<&str> = path.split("::").collect();
         match parts.as_slice() {
-            ["std", "common", rest @ ..] => format!("std/common/{}.dt", rest.join("/")),
-            ["std", module] => format!("std/{}/{}.dt", Self::platform(), module),
-            ["std", rest @ ..] => format!("std/{}/{}.dt", Self::platform(), rest.join("/")),
+            // ["std", "common", rest @ ..] => format!("std/common/{}.dt", rest.join("/")),
+            ["std", module] => format!("std/{}.dt", module),
+            ["std", rest @ ..] => format!("std/{}.dt", rest.join("/")),
             _ => path.to_string(),
         }
     }
@@ -135,11 +146,11 @@ impl Codegen {
     fn gen_statement(&mut self, stmt: &Statement) {
         match stmt {
             Statement::Function {
-                name, args, body, ..
-            } => self.gen_function(name, args, body),
+                name, args, returns, body, ..
+            } => self.gen_function(name, args, returns, body),
             Statement::AsmFunction {
-                name, args, body, ..
-            } => self.gen_asm_function(name, args, body),
+                arch, name, args, returns, body, ..
+            } if (arch.eq(&self.target)) => self.gen_asm_function(name, args, returns, body),
             Statement::Import(path, ..) => self.gen_import(path),
             Statement::Variable {
                 name, ty, value, ..
@@ -154,11 +165,18 @@ impl Codegen {
                 ..
             } => self.gen_struct(name, generics, fields),
             Statement::Assign { .. } => {}
+            _ => {}
         }
     }
 
-    fn gen_function(&mut self, name: &str, args: &[(String, Type)], body: &[Statement]) {
-        self.scope.register_symbol(name);
+    fn gen_function(&mut self, name: &str, args: &[(String, Type)], returns: &Option<Type>, body: &[Statement]) {
+        self.scope.register_symbol(
+            name,
+            match returns {
+                Some(_) => returns,
+                None => &Some(Type::Void)
+            }
+        );
         self.scope.clear_locals();
         let arg_str: Vec<String> = args
             .iter()
@@ -168,8 +186,14 @@ impl Codegen {
                 format!("{} %{}_arg", ty, n)
             })
             .collect();
+        let returns = self.llvm_type(
+            match returns {
+                Some(ty) => ty,
+                None => &Type::Void
+            }
+        );
         self.emitter
-            .emit(&format!("define i8 @{}({}) {{", name, arg_str.join(", ")));
+            .emit(&format!("define {} @{}({}) {{", returns, name, arg_str.join(", ")));
         self.emitter.emit("entry:");
         for (n, t) in args {
             let ty = self.llvm_type(t);
@@ -177,24 +201,42 @@ impl Codegen {
             self.emitter
                 .emit(&format!("  store {} %{}_arg, ptr %{}", ty, n, n));
         }
-        let mut last = Value::new("0", "i8");
+        let mut last = Value::new("0", &returns);
         for s in body {
             last = self.gen_stmt_inner(s);
         }
+        if returns == "void" {
+            self.emitter
+                .emit(&format!("  ret {}", returns));
+
+        } else {
         self.emitter
-            .emit(&format!("  ret {} {}", last.ty, last.name));
+            .emit(&format!("  ret {} {}", returns, last.name));
+        }
         self.emitter.emit("}");
         self.emitter.emit("");
     }
 
-    fn gen_asm_function(&mut self, name: &str, args: &[(String, Type)], body: &str) {
-        self.scope.register_symbol(name);
-        let arg_types: Vec<String> = args.iter().map(|(_, t)| self.llvm_type(t)).collect();
+    fn gen_asm_function(&mut self, name: &str, args: &[Type], returns: &Option<Type>, body: &str) {
+        self.scope.register_symbol(
+            name,
+            match returns {
+                Some(_) => returns,
+                None => &Some(Type::Void)
+            }
+        );
+        let arg_types: Vec<String> = args.iter().map(|(t)| self.llvm_type(t)).collect();
+        let returns = self.llvm_type(
+            match returns {
+                Some(ty) => ty,
+                None => &Type::Void
+            }
+        );
         self.emitter
-            .emit(&format!("declare i8 @{}({})", name, arg_types.join(", ")));
+            .emit(&format!("declare {} @{}({})", returns, name, arg_types.join(", ")));
         self.emitter.emit("");
         let asm_body = format!(
-            "    .intel_syntax noprefix\n    .globl {}\n{}:\n{}\n    .att_syntax prefix",
+            "    .intel_syntax noprefix\n    .text\n.globl _{}\n_{}:\n{}\n    .att_syntax prefix",
             name,
             name,
             body.lines()
@@ -214,7 +256,7 @@ impl Codegen {
                 self.errors.error_no_loc(ErrorKind::UnsupportedFeature(
                     "field access on non-struct type".to_string(),
                 ));
-                return Value::new("0", "i8");
+                return Value::new("0", "i8"); // TODO i8
             }
         };
 
@@ -227,7 +269,7 @@ impl Codegen {
                     span.start,
                     field.len(),
                 );
-                return Value::new("0", "i8");
+                return Value::new("0", "i8"); // TODO i8
             }
         };
 
@@ -235,7 +277,7 @@ impl Codegen {
         let gep = self.emitter.fresh();
         let tmp = self.emitter.fresh();
         self.emitter.emit(&format!(
-            "  {} = getelementptr i8, ptr {}, i64 {}",
+            "  {} = getelementptr i8, ptr {}, i64 {}", // TODO i64
             gep, ptr.name, offset
         ));
         self.emitter
@@ -249,7 +291,7 @@ impl Codegen {
 
         let total_size: usize = fields.iter().map(|(_, t)| field_size(t)).sum();
         self.emitter.emit_global(&format!(
-            "%struct.{} = type {{ [{} x i8] }}",
+            "%struct.{} = type {{ [{} x i8] }}",  // TODO i8
             name, total_size
         ));
     }
@@ -282,19 +324,19 @@ impl Codegen {
         if let Some(t) = ty {
             self.scope.insert_global(name, t.clone());
         } else {
-            self.scope.register_symbol(name);
+            self.scope.register_symbol(name, &None);
         }
         match ty {
-            Some(Type::DataArray(n)) => {
+            Some(Type::DataArray(bits, n)) => {
                 let bytes = self.const_bytes_padded(value, *n);
                 self.emitter
-                    .emit_global(&format!("@{} = global [{} x i8] c\"{}\"", name, n, bytes));
+                    .emit_global(&format!("@{} = global [{} x i8] c\"{}\"", name, n, bytes));  // TODO i8
             }
             _ => {
                 let llvm_ty = ty
                     .as_ref()
                     .map(|t| self.llvm_type(t))
-                    .unwrap_or("i8".to_string());
+                    .unwrap_or("i8".to_string()); // TODO i8
                 self.emitter
                     .emit_global(&format!("@{} = global {} zeroinitializer", name, llvm_ty));
             }
@@ -313,7 +355,7 @@ impl Codegen {
         bytes
             .iter()
             .map(|&b| {
-                if (32..=126).contains(&b) && b != b'"' && b != b'\\' {
+                if (32..=126).contains(&b) && b != b'"' && b != b'\\' {  // TODO Maybe add an explanation for what's going on here lol
                     format!("{}", b as char)
                 } else {
                     format!("\\{:02X}", b)
@@ -349,9 +391,9 @@ impl Codegen {
                 value,
                 span,
             } => self.gen_assign(target, value, span),
-            Statement::Struct { .. } => Value::new("0", "i8"),
+            Statement::Struct { .. } => Value::new("0", "i8"),  // TODO i8
             Statement::Expr(e) => self.gen_expr(e),
-            _ => Value::new("0", "i8"),
+            _ => Value::new("0", "i8"),  // TODO i8
         }
     }
 
@@ -364,12 +406,12 @@ impl Codegen {
     ) -> Value {
         if self.scope.contains_local(name) {
             self.err_already_defined(name, span);
-            return Value::new("0", "i8");
+            return Value::new("0", "i8");  // TODO i8
         }
         let val = self.gen_expr(value);
         let resolved = ty.clone().unwrap_or_else(|| match val.ty.as_str() {
-            "ptr" => Type::DataArray(0),
-            _ => Type::Data,
+            "ptr" => Type::DataArray(8, 0),
+            _ => Type::Data(8),
         });
         let llvm_ty = self.llvm_type(&resolved);
         self.scope.insert_local(name, resolved.clone());
@@ -381,9 +423,9 @@ impl Codegen {
 
     fn alloc_store(&mut self, name: &str, llvm_ty: &str, val: &Value, src_ty: &Option<Type>) {
         match src_ty {
-            Some(Type::DataArray(n)) if *n > 0 && val.ty == "ptr" => {
+            Some(Type::DataArray(bits, n)) if *n > 0 && val.ty == "ptr" => {
                 self.emitter.emit(&format!(
-                    "  call void @llvm.memcpy.p0.p0.i64(ptr %{}, ptr {}, i64 {}, i1 false)",
+                    "  call void @llvm.memcpy.p0.p0.i64(ptr %{}, ptr {}, i64 {}, i1 false)",  // TODO i64
                     name, val.name, n
                 ));
             }
@@ -401,12 +443,13 @@ impl Codegen {
         }
     }
 
+    // TODO When we run into issues with Void, we'll edit this
     fn gen_assign_var(&mut self, name: &str, val: Value, span: &TextSpan) -> Value {
         let ty = match self.scope.lookup(name) {
             Some((t, _)) => t,
             None => {
                 self.err_not_defined(name, span);
-                return Value::new("0", "i8");
+                return Value::new("0", "i8");  // TODO i8
             }
         };
         let llvm_ty = self.llvm_type(&ty);
@@ -423,19 +466,19 @@ impl Codegen {
         };
         let gep = self.emitter.fresh();
         self.emitter.emit(&format!(
-            "  {} = getelementptr i8, ptr {}{}, i64 {}",
+            "  {} = getelementptr i8, ptr {}{}, i64 {}",  // TODO i64
             gep, prefix, name, idx.name
         ));
         self.emitter
-            .emit(&format!("  store i8 {}, ptr {}", val.name, gep));
-        Value::new(&val.name, "i8")
+            .emit(&format!("  store i8 {}, ptr {}", val.name, gep)); // TODO i8
+        Value::new(&val.name, "i8") // TODO i8
     }
 }
 
 impl Codegen {
     fn gen_expr(&mut self, expr: &Expr) -> Value {
         match expr {
-            Expr::Number(n, _) => Value::new(&n.to_string(), "i8"),
+            Expr::Number(n, _) => Value::new(&n.to_string(), "i8"), // TODO i8
             Expr::String(s, _) => self.gen_string(s),
             Expr::Identifier(name, span) => self.gen_identifier(name, span),
             Expr::Group(inner, _) => self.gen_expr(inner),
@@ -452,6 +495,9 @@ impl Codegen {
                 ..
             } => self.gen_ternary(cond, then_branch, else_branch),
             Expr::Index { target, index, .. } => self.gen_index(target, index),
+            Expr::Pointer(e, _) => {
+                self.gen_ptr(e)
+            },
         }
     }
 
@@ -460,12 +506,12 @@ impl Codegen {
         let global_name = format!("@str{}", n);
         let len = s.len() + 1;
         self.emitter.emit_global(&format!(
-            "{} = private constant [{} x i8] c\"{}\\00\"",
+            "{} = private constant [{} x i8] c\"{}\\00\"", // TODO i8
             global_name, len, s
         ));
         let tmp = self.emitter.fresh();
         self.emitter.emit(&format!(
-            "  {} = getelementptr [{} x i8], ptr {}, i32 0, i32 0",
+            "  {} = getelementptr [{} x i8], ptr {}, i32 0, i32 0", // TODO i32
             tmp, len, global_name
         ));
         Value::new(&tmp, "ptr")
@@ -476,7 +522,7 @@ impl Codegen {
             Some((ty, storage)) => self.emit_var_access(name, ty, storage),
             None => {
                 self.err_not_defined(name, span);
-                Value::new("0", "i8")
+                Value::new("0", "i8") // TODO i8
             }
         }
     }
@@ -487,20 +533,26 @@ impl Codegen {
             Storage::Global => "@",
         };
         match ty {
-            Type::DataArray(n) => {
+            Type::DataArray(bits, n) => {
                 let tmp = self.emitter.fresh();
                 self.emitter.emit(&format!(
-                    "  {} = getelementptr [{} x i8], ptr {}{}, i32 0, i32 0",
-                    tmp, n, prefix, name
+                    "  {} = getelementptr [{} x i{}], ptr {}{}, i32 0, i32 0", // TODO i32
+                    tmp, n, bits, prefix, name
                 ));
                 Value::new(&tmp, "ptr")
             }
-            Type::Data => {
+            Type::Data(bits) => {
                 let tmp = self.emitter.fresh();
                 self.emitter
-                    .emit(&format!("  {} = load i8, ptr {}{}", tmp, prefix, name));
-                Value::new(&tmp, "i8")
+                    .emit(&format!("  {} = load i{}, ptr {}{}", tmp, bits, prefix, name));
+                Value::new(&tmp, format!("i{}", bits).as_str())
             }
+            Type::Pointer(inner) => {
+                let tmp = self.emitter.fresh();
+                self.emitter
+                    .emit(&format!("  {} = load ptr, ptr {}{}", tmp, prefix, name));
+                Value::new(&tmp, "ptr")
+            },
             Type::Ref(_) => {
                 let tmp = self.emitter.fresh();
                 self.emitter
@@ -510,13 +562,48 @@ impl Codegen {
             Type::Generic(n, _) => {
                 let tmp = self.emitter.fresh();
                 self.emitter.emit(&format!(
-                    "  {} = getelementptr %struct.{}, ptr {}{}, i32 0, i32 0",
+                    "  {} = getelementptr %struct.{}, ptr {}{}, i32 0, i32 0", // TODO i32
                     tmp, n, prefix, name
                 ));
                 Value::new(&tmp, "ptr")
             }
+            Type::Void => {
+                Value::new("0", "void")
+            }
             Type::Named(n) => todo!("named type: {}", n),
         }
+    }
+
+    fn gen_ptr(&mut self, inner: &Expr) -> Value {
+        match inner {
+            Expr::Identifier(name, span) => {
+                match self.scope.lookup(name) {
+                    Some((ty, storage)) => {
+                        // let tmp = self.emitter.fresh();
+                        // self.emitter.emit(&format!(
+                        //     "  {} = alloca ptr \n  store ptr %{}, ptr {}", tmp, name, tmp
+                        // ));
+                        Value::new(&format!("{}{name}", match storage { Storage::Global => "@", _ => "%" }), "ptr")
+                    }
+                    None => {
+                        self.err_not_defined(name, span);
+                        Value::new("0", "i8") // TODO i8
+                    }
+                }
+            }
+            _ => {
+
+                let expr = self.gen_expr(inner);
+
+                let tmp = self.emitter.fresh();
+                self.emitter.emit(&format!(
+                    "  {} = alloca {} \n  store {} {}, ptr {}", tmp, expr.ty, expr.ty, expr.name, tmp
+                ));
+
+                Value::new(&tmp, "ptr")
+            }
+        }
+
     }
 
     fn gen_call(&mut self, callee: &Expr, args: &[Expr]) -> Value {
@@ -532,17 +619,39 @@ impl Codegen {
                 self.errors.error_no_loc(ErrorKind::UnsupportedFeature(
                     "complex callees not yet supported".to_string(),
                 ));
-                return Value::new("0", "i8");
+                return Value::new("0", "i8"); // TODO i8
             }
         };
-        let tmp = self.emitter.fresh();
-        self.emitter.emit(&format!(
-            "  {} = call i8 @{}({})",
-            tmp,
-            name,
-            arg_vals.join(", ")
-        ));
-        Value::new(&tmp, "i8")
+        let returns = match self.scope.get_symbol_type(&name) {
+            Some(symty) => {
+                match symty {
+                    SymbolType::Typed(ty) => ty,
+                    SymbolType::Untyped => &Type::Data(8),
+                }
+            },
+            None => &Type::Data(8),
+        };
+        let ty = self.types.llvm_type(returns).unwrap_or("i8".to_string());
+        if ty == "void" {
+            self.emitter.emit(&format!(
+                "  call {} @{}({})",
+                ty,
+                name,
+                arg_vals.join(", ")
+            ));
+            Value::new("0", &ty)
+
+        } else {
+            let tmp = self.emitter.fresh();
+            self.emitter.emit(&format!(
+                "  {} = call {} @{}({})",
+                tmp,
+                ty,
+                name,
+                arg_vals.join(", ")
+            ));
+            Value::new(&tmp, &ty)
+        }
     }
 
     fn gen_ternary(&mut self, cond: &Expr, then_b: &Expr, else_b: &Expr) -> Value {
@@ -555,7 +664,7 @@ impl Codegen {
         );
         let cond_bit = self.emitter.fresh();
         self.emitter
-            .emit(&format!("  {} = icmp ne i8 {}, 0", cond_bit, cond_val.name));
+            .emit(&format!("  {} = icmp ne i8 {}, 0", cond_bit, cond_val.name)); // TODO i8
         self.emitter.emit(&format!(
             "  br i1 {}, label %{}, label %{}",
             cond_bit, then_l, else_l
@@ -581,11 +690,11 @@ impl Codegen {
         let gep = self.emitter.fresh();
         let tmp = self.emitter.fresh();
         self.emitter.emit(&format!(
-            "  {} = getelementptr i8, ptr {}, i64 {}",
+            "  {} = getelementptr i8, ptr {}, i64 {}", // TODO i64
             gep, ptr.name, idx.name
         ));
         self.emitter
-            .emit(&format!("  {} = load i8, ptr {}", tmp, gep));
-        Value::new(&tmp, "i8")
+            .emit(&format!("  {} = load i8, ptr {}", tmp, gep)); // TODO i8
+        Value::new(&tmp, "i8") // TODO i8
     }
 }

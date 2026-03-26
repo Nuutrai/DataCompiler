@@ -5,11 +5,13 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub enum Type {
-    Data,
-    DataArray(usize),
+    Data(u8),
+    DataArray(u8, usize),
     Named(String),
     Ref(Box<Type>),
+    Pointer(Box<Type>),
     Generic(String, Vec<Type>),
+    Void,
 }
 
 #[derive(Debug, Clone)]
@@ -17,6 +19,7 @@ pub enum Expr {
     Number(usize, TextSpan),
     String(String, TextSpan),
     Identifier(String, TextSpan),
+    Pointer(Box<Expr>, TextSpan),
     Group(Box<Expr>, TextSpan),
     Call {
         callee: Box<Expr>,
@@ -46,6 +49,7 @@ impl Expr {
         match self {
             Expr::Number(_, s) => s,
             Expr::String(_, s) => s,
+            Expr::Pointer(_, s) => s,
             Expr::Identifier(_, s) => s,
             Expr::Group(_, s) => s,
             Expr::Field { span, .. } => span,
@@ -61,13 +65,15 @@ pub enum Statement {
     Function {
         name: String,
         args: Vec<(String, Type)>,
+        returns: Option<Type>,
         body: Vec<Statement>,
         span: TextSpan,
     },
     AsmFunction {
         arch: String,
         name: String,
-        args: Vec<(String, Type)>,
+        args: Vec<Type>,
+        returns: Option<Type>,
         body: String,
         span: TextSpan,
     },
@@ -164,7 +170,7 @@ impl Parser {
     }
 
     pub fn is_at_end(&self) -> bool {
-        matches!(self.current(), TokenKind::Eof)
+        matches!(self.current(), TokenKind::Eof) || self.pos == self.tokens.len() - 1
     }
 
     fn expect_identifier(&mut self) -> String {
@@ -199,15 +205,8 @@ impl Parser {
     fn span(&self) -> TextSpan {
         self.tokens
             .get(self.pos)
-            .map(|t| {
-                TextSpan::new(
-                    t.span.start,
-                    t.span.end,
-                    t.span.line,
-                    t.span.literal.clone(),
-                )
-            })
-            .unwrap_or(TextSpan::new(0, 0, 0, String::new()))
+            .unwrap_or(&Token::new(TokenKind::Eof, TextSpan::new(0, 0, 0, String::from("Error: Invaid token"))))
+            .span.clone()
     }
 
     pub fn parse(&mut self) -> Vec<Statement> {
@@ -245,7 +244,7 @@ impl Parser {
 
     fn parse_statement(&mut self) -> Statement {
         match self.current().clone() {
-            TokenKind::Data => self.parse_data(),
+            TokenKind::Data(_) => self.parse_data(),
             TokenKind::Identifier(name) => match self.peek_by(1) {
                 TokenKind::Equals => self.parse_assign(),
                 TokenKind::SquareLeft => self.parse_index_assign(),
@@ -326,15 +325,24 @@ impl Parser {
         let name = self.expect_identifier();
         self.expect(&TokenKind::LeftParen);
         let args = self.parse_param_list();
+
+        let returns = if !self.match_kind(&TokenKind::Colon) {
+            None
+        } else {
+            Some(self.parse_type())
+        };
+        
         let body = self.parse_body();
         Statement::Function {
             name,
             args,
+            returns,
             body,
             span,
         }
     }
 
+    // TODO Should we make this not have an optional type?
     fn parse_variable(&mut self) -> Statement {
         let span = self.span();
         let name = self.expect_identifier();
@@ -363,24 +371,32 @@ impl Parser {
         self.expect(&TokenKind::Dollar);
         let name = self.expect_identifier();
         self.expect(&TokenKind::LeftParen);
-        let args = self.parse_param_list();
+        let args = self.parse_asm_param_list();
+        
+        let returns = if !self.match_kind(&TokenKind::Colon) {
+            None
+        } else {
+            Some(self.parse_type())
+        };
+        
         let body = self.parse_asm_body();
         Statement::AsmFunction {
             arch,
             name,
             args,
+            returns,
             body,
             span,
         }
     }
 
     fn parse_type(&mut self) -> Type {
-        if self.match_kind(&TokenKind::Ampersand) {
-            return Type::Ref(Box::new(self.parse_type()));
-        }
+        // if self.match_kind(&TokenKind::Ampersand) {
+        //     return Type::Ref(Box::new(self.parse_type()));
+        // }
 
         match self.current().clone() {
-            TokenKind::Data => {
+            TokenKind::Data(bits) => {
                 self.advance();
                 if self.match_kind(&TokenKind::SquareLeft) {
                     let size = match self.current().clone() {
@@ -391,9 +407,15 @@ impl Parser {
                         _ => 0,
                     };
                     self.expect(&TokenKind::SquareRight);
-                    Type::DataArray(size)
+                    Type::DataArray(bits.unwrap_or(8), size)
+                } else if self.match_kind(&TokenKind::Ampersand) {
+                    Type::Pointer(Box::from(Type::Data(bits.unwrap_or(8))))
                 } else {
-                    Type::Data
+                    if bits == Some(0) {
+                        Type::Void
+                    } else {
+                        Type::Data(bits.unwrap_or(8))
+                    }
                 }
             }
             TokenKind::Identifier(_) => {
@@ -425,7 +447,7 @@ impl Parser {
                     span.start,
                     span.len(),
                 );
-                Type::Data
+                Type::Data(8)
             }
         }
     }
@@ -472,6 +494,7 @@ impl Parser {
         }
     }
 
+    // TODO Look into making the two param list functions into one with an asm argument :p
     fn parse_param_list(&mut self) -> Vec<(String, Type)> {
         let mut params = Vec::new();
         if !self.match_kind(&TokenKind::RightParen) {
@@ -480,6 +503,21 @@ impl Parser {
                 self.expect(&TokenKind::Colon);
                 let ty = self.parse_type();
                 params.push((name, ty));
+                if self.match_kind(&TokenKind::RightParen) {
+                    break;
+                }
+                self.expect(&TokenKind::Comma);
+            }
+        }
+        params
+    }
+
+    fn parse_asm_param_list(&mut self) -> Vec<Type> {
+        let mut params = Vec::new();
+        if !self.match_kind(&TokenKind::RightParen) {
+            loop {
+                let ty = self.parse_type();
+                params.push(ty);
                 if self.match_kind(&TokenKind::RightParen) {
                     break;
                 }
@@ -602,6 +640,11 @@ impl Parser {
             TokenKind::Char(b) => {
                 self.advance();
                 Expr::Number(b as usize, span)
+            }
+            TokenKind::Ampersand => {
+                self.advance();
+                let expr = self.parse_expr();
+                Expr::Pointer(Box::new(expr), span)
             }
             TokenKind::Identifier(s) => {
                 self.advance();

@@ -16,6 +16,7 @@ pub enum ErrorKind {
     ImportNotFound(String),
     UnsupportedFeature(String),
     AlreadyDefined(String),
+    ErrorAlreadyHandled(String),
 }
 
 impl ErrorKind {
@@ -29,6 +30,7 @@ impl ErrorKind {
             ErrorKind::ImportNotFound(_) => "E0006",
             ErrorKind::UnsupportedFeature(_) => "E0007",
             ErrorKind::AlreadyDefined(_) => "E0008",
+            ErrorKind::ErrorAlreadyHandled(_) => "E0009",
         }
     }
 
@@ -45,6 +47,9 @@ impl ErrorKind {
             ErrorKind::UnsupportedFeature(msg) => format!("not yet supported: {}", msg),
             ErrorKind::AlreadyDefined(name) => {
                 format!("'{}' is already defined in this scope", name)
+            }
+            ErrorKind::ErrorAlreadyHandled(process) => {
+                format!("An error occurred whilst `{}`. Previous processes should render this state impossible. Are you using a tampered or in-dev compiler?", process)
             }
         }
     }
@@ -185,10 +190,10 @@ impl ErrorReporter {
             .map(|(i, _)| i + 1)
     }
 
-    pub fn error(&mut self, kind: ErrorKind, line: usize, _col: usize, _len: usize) {
+    pub fn error(&mut self, kind: ErrorKind, line: usize, _col: usize, len: usize) {
         let source_line = self.source_lines.get(line.saturating_sub(1)).cloned();
         let token = kind.token();
-        let len = token.len().max(1);
+        // let len = token.len().max(1);
         let col = source_line
             .as_deref()
             .and_then(|src| Self::find_whole_word(src, token))

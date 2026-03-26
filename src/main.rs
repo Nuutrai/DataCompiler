@@ -13,8 +13,8 @@ mod error;
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    if args.len() < 2 {
-        eprintln!("Usage: {} <filename>", args[0]);
+    if args.len() < 3 {
+        eprintln!("Usage: {} <filename> <target>", args[0]);
         std::process::exit(1);
     }
 
@@ -32,7 +32,7 @@ fn main() {
     checker.check(&ast);
     checker.errors.fatal_if_any();
 
-    let mut codegen = Codegen::new(&args[1]);
+    let mut codegen = Codegen::new(&args[1], &args[2]);
     let ir = codegen.generate(&ast);
     codegen.errors.fatal_if_any();
     codegen.compile_to_binary(&ir, "output");
