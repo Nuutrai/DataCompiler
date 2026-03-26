@@ -7,6 +7,11 @@ pub enum Storage {
     Global,
 }
 
+pub enum SymbolType {
+    Typed(Type),
+    Untyped,
+}
+
 #[derive(Debug, Clone)]
 pub struct StructDef {
     pub fields: Vec<(String, Type)>,
@@ -16,7 +21,7 @@ pub struct StructDef {
 pub struct ScopeStack {
     scopes: Vec<HashMap<String, Type>>,
     global_types: HashMap<String, Type>,
-    global_symbols: HashSet<String>,
+    global_symbols: HashMap<String, SymbolType>,
     pub structs: HashMap<String, StructDef>,
 }
 
@@ -25,7 +30,7 @@ impl ScopeStack {
         Self {
             scopes: vec![HashMap::new()],
             global_types: HashMap::new(),
-            global_symbols: HashSet::new(),
+            global_symbols: HashMap::new(),
             structs: HashMap::new(),
         }
     }
@@ -53,15 +58,24 @@ impl ScopeStack {
 
     pub fn insert_global(&mut self, name: &str, ty: Type) {
         self.global_types.insert(name.to_string(), ty);
-        self.global_symbols.insert(name.to_string());
+        self.global_symbols.insert(name.to_string(), SymbolType::Untyped);
     }
 
-    pub fn register_symbol(&mut self, name: &str) {
-        self.global_symbols.insert(name.to_string());
+    pub fn register_symbol(&mut self, name: &str, ty: &Option<Type>) {
+        self.global_symbols.insert(
+            name.to_string(),
+            match ty {
+                None => SymbolType::Untyped,
+                Some(ty) => {
+                    SymbolType::Typed(ty.clone())
+                }
+            }
+        );
     }
 
     pub fn is_known_symbol(&self, name: &str) -> bool {
-        self.global_symbols.contains(name)
+        self.global_symbols.contains_key(name)
+
     }
 
     pub fn contains_local(&self, name: &str) -> bool {
@@ -81,6 +95,10 @@ impl ScopeStack {
             return Some((ty.clone(), Storage::Global));
         }
         None
+    }
+
+    pub fn get_symbol_type(&self, name: &str) -> Option<&SymbolType> {
+        self.global_symbols.get(name)
     }
 
     pub fn register_struct(
@@ -112,8 +130,8 @@ impl ScopeStack {
 
 pub fn field_size(ty: &Type) -> usize {
     match ty {
-        Type::Data => 1,
-        Type::DataArray(n) => *n,
+        Type::Data(bits) => (1 * (bits / 8)) as usize,
+        Type::DataArray(bits, n) => *n * (bits / 8) as usize,
         Type::Ref(_) => 8,
         _ => 1,
     }

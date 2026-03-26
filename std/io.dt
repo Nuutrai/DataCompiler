@@ -1,0 +1,9 @@
+data x86_64-apple-darwin$print(data) {
+    .extern _puts
+    jmp _puts
+}
+
+data x86_64-linux-gnu$print(data) {
+    .extern _puts
+    jmp _puts
+}

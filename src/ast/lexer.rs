@@ -1,6 +1,8 @@
+use std::ops::Shr;
+
 #[derive(Debug, Clone)]
 pub enum TokenKind {
-    Data,
+    Data(Option<u8>),
     StringLiteral(String),
     Identifier(String),
     Number(usize),
@@ -67,7 +69,7 @@ pub struct Token {
 }
 
 impl Token {
-    fn new(kind: TokenKind, span: TextSpan) -> Token {
+    pub fn new(kind: TokenKind, span: TextSpan) -> Token {
         Token { kind, span }
     }
 }
@@ -78,10 +80,11 @@ pub(crate) struct Lexer {
     current_line: usize,
 }
 
+// TODO Add support for 0x, 0b, etc.
 impl Lexer {
     pub fn new(input: String) -> Self {
         Self {
-            input: input.replace("\r\n", "\n"),
+            input: input.replace("\r\n", "\n").trim().to_string(),
             current_pos: 0,
             current_line: 1,
         }
@@ -130,7 +133,7 @@ impl Lexer {
 
                 '\'' => self.consume_char_literal(),
                 '"' => self.consume_any_string(),
-                c if c.is_alphabetic() => self.consume_identifier(),
+                c if c.is_alphabetic() || c.eq(&'_') => self.consume_identifier(),
                 c if c.is_digit(10) => self.consume_number(),
                 c if c.is_whitespace() => {
                     self.consume();
@@ -289,7 +292,24 @@ impl Lexer {
         self.consume_while(Some(&mut buffer), |c| c.is_alphanumeric() || c == '_');
 
         let kind = match buffer.as_str() {
-            "data" => TokenKind::Data,
+             b if b.starts_with("data") => {
+                 let stripped = b.strip_prefix("data").unwrap();
+                 if stripped == "" {
+                     return Token::new(
+                         TokenKind::Data(None),
+                         TextSpan::new(start, self.current_pos, self.current_line, buffer),
+                     )
+                 }
+                 match Self::string_to_number(stripped) {
+                     Some(num) => {
+                         if Self::is_possible_bit_size(num as u8) {
+                             return self.error_token(start, format!("Unsupported bit size: {}", num).as_str());
+                         }
+                         TokenKind::Data(Some(num as u8))
+                     },
+                     None => TokenKind::Identifier(buffer.clone()),
+                 }
+            },
             _ => TokenKind::Identifier(buffer.clone()),
         };
 
@@ -312,17 +332,45 @@ impl Lexer {
             self.consume();
         }
 
+        match Self::string_to_number(&buffer) {
+            Some(n) => Token::new(
+                TokenKind::Number(n),
+                TextSpan::new(start, self.current_pos, self.current_line, buffer),
+            ),
+            None => self.error_token(start, "Number was not a number"),
+        }
+
+    }
+
+    fn string_to_number(buffer: &str) -> Option<usize> {
         let mut number: usize = 0;
 
         for c in buffer.chars() {
             number *= 10;
-            number += c.to_digit(10).unwrap() as usize;
+            match c.to_digit(10) {
+                None => {
+                    return None
+                }
+                Some(n) => {
+                    number += n as usize;
+                }
+            }
         }
+        Some(number)
+    }
 
-        Token::new(
-            TokenKind::Number(number),
-            TextSpan::new(start, self.current_pos, self.current_line, buffer),
-        )
+    fn is_possible_bit_size(number: u8) -> bool {
+        if number > 64 {
+            return false;
+        }
+        let mut current: u8 = 64;
+        while current > 8 {
+            if number % current != 0 {
+                return false;
+            }
+            current >> 1;
+        }
+        true
     }
 
     fn consume_any_string(&mut self) -> Token {
