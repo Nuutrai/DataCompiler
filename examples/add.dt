@@ -3,3 +3,9 @@ data x86_64-apple-darwin$add_int(data16, data) {
     add rax, rsi
     ret
 }
+
+data    x86_64-linux-gnu$add_int(data16, data) {
+    mov rax, rdi
+    add rax, rsi
+    ret
+}

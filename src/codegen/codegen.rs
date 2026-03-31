@@ -14,6 +14,7 @@ use crate::{
 };
 use std::collections::HashSet;
 use std::thread::scope;
+use std::vec;
 use crate::codegen::scope::SymbolType;
 
 pub struct Codegen {
@@ -497,7 +498,7 @@ impl Codegen {
     }
 
     fn gen_assign_index(&mut self, name: &str, index: &Expr, val: Value) -> Value {
-        let idx = self.gen_expr(index);
+        let idx = self.gen_expr(index).into_iter().nth(0).unwrap();
         let prefix = match self.scope.lookup(name) {
             Some((_, Storage::Global)) => "@",
             _ => "%",
@@ -516,25 +517,25 @@ impl Codegen {
 impl Codegen {
     fn gen_expr(&mut self, expr: &Expr) -> Vec<Value> {
         match expr {
-            Expr::Number(n, _) => Vec::from(Value::new(&n.to_string(), "i8")), // TODO i8
-            Expr::String(s, _) => self.gen_string(s),
-            Expr::Identifier(name, span) => self.gen_identifier(name, span),
+            Expr::Number(n, _) =>  vec!(Value::new(&n.to_string(), "i8")), // TODO i8
+            Expr::String(s, _) => vec!(self.gen_string(s)),
+            Expr::Identifier(name, span) => vec!(self.gen_identifier(name, span)),
             Expr::Group(inner, _) => self.gen_expr(inner),
             Expr::Field {
                 target,
                 field,
                 span,
-            } => self.gen_field(target, field, span),
-            Expr::Call { callee, args, .. } => self.gen_call(callee, args),
+            } => vec!(self.gen_field(target, field, span)),
+            Expr::Call { callee, args, .. } => vec!(self.gen_call(callee, args)),
             Expr::Ternary {
                 cond,
                 then_branch,
                 else_branch,
                 ..
-            } => self.gen_ternary(cond, then_branch, else_branch),
-            Expr::Index { target, index, .. } => self.gen_index(target, index),
+            } => vec!(self.gen_ternary(cond, then_branch, else_branch)),
+            Expr::Index { target, index, .. } => vec!(self.gen_index(target, index)),
             Expr::Pointer(e, _) => {
-                self.gen_ptr(e)
+                vec!(self.gen_ptr(e))
             },
             Expr::List(exprs, _) => {
                 self.gen_list(exprs)
@@ -641,7 +642,7 @@ impl Codegen {
             }
             _ => {
 
-                let expr = self.gen_expr(inner);
+                let expr = self.gen_expr(inner).into_iter().nth(0).unwrap();
 
                 let tmp = self.emitter.fresh();
                 self.emitter.emit(&format!(
@@ -655,7 +656,7 @@ impl Codegen {
     }
 
     fn gen_call(&mut self, callee: &Expr, args: &[Expr]) -> Value {
-        let arg_vals: Vec<String> = args.iter().map(|a| self.gen_expr(a).as_arg()).collect();
+        let arg_vals: Vec<String> = args.iter().map(|a| self.gen_expr(a).first().unwrap().as_arg()).collect();
         let name = match callee {
             Expr::Identifier(n, span) => {
                 if !self.scope.is_known_symbol(n) {
@@ -703,7 +704,7 @@ impl Codegen {
     }
 
     fn gen_ternary(&mut self, cond: &Expr, then_b: &Expr, else_b: &Expr) -> Value {
-        let cond_val = self.gen_expr(cond);
+        let cond_val = self.gen_expr(cond).into_iter().nth(0).unwrap();
         let n = self.emitter.tmp_counter();
         let (then_l, else_l, merge_l) = (
             format!("then{}", n),
@@ -718,10 +719,10 @@ impl Codegen {
             cond_bit, then_l, else_l
         ));
         self.emitter.emit(&format!("{}:", then_l));
-        let then_val = self.gen_expr(then_b);
+        let then_val = self.gen_expr(then_b).into_iter().nth(0).unwrap();
         self.emitter.emit(&format!("  br label %{}", merge_l));
         self.emitter.emit(&format!("{}:", else_l));
-        let else_val = self.gen_expr(else_b);
+        let else_val = self.gen_expr(else_b).into_iter().nth(0).unwrap();
         self.emitter.emit(&format!("  br label %{}", merge_l));
         self.emitter.emit(&format!("{}:", merge_l));
         let result = self.emitter.fresh();
@@ -733,8 +734,10 @@ impl Codegen {
     }
 
     fn gen_index(&mut self, target: &Expr, index: &Expr) -> Value {
-        let ptr = self.gen_expr(target);
-        let idx = self.gen_expr(index);
+
+        let ptr = self.gen_expr(target).into_iter().nth(0).unwrap();
+        let idx = self.gen_expr(index).into_iter().nth(0).unwrap();
+
         let gep = self.emitter.fresh();
         let tmp = self.emitter.fresh();
         self.emitter.emit(&format!(
@@ -746,26 +749,13 @@ impl Codegen {
         Value::new(&tmp, "i8") // TODO i8
     }
 
-    fn gen_list(&mut self, exprs: &Vec<Expr>) -> Value {
+    fn gen_list(&mut self, exprs: &Vec<Expr>) -> Vec<Value> {
         let mut vals = Vec::new();
         for expr in exprs {
-            vals.push(self.gen_expr(expr));
-        }
-        let generated_exprs: Vec<String> = vals.iter().map(|v| format!("{{}} {}", v.name)).collect();
-        let mut llvm_expr = String::from("[ ");
-        llvm_expr.push_str(&generated_exprs.join(", "));
-        llvm_expr.push_str(" ]");
-        let ty = format!(
-            "[ {} x {} ]",
-            exprs.len(),
-            match vals.get(0) {
-                Some(v) => v.ty.clone(),
-                None => "i8".to_string()
+            for expr in self.gen_expr(expr) {
+                vals.push(expr);
             }
-        );
-        // self.emitter.emit(&format!("  {} = alloca {}", tmp, ty));
-        // self.emitter.emit(&format!("  store {} [ {} ], ptr {}", ty, llvm_expr, tmp));
-        // self.emitter.emit(&format!("  {} = {} [ {} ]", tmp, ty, llvm_expr));
-        Value::new(&llvm_expr, &ty)
+        }
+        vals
     }
 }
