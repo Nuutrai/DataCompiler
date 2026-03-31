@@ -3,9 +3,12 @@ use crate::{
     error::{ErrorKind, ErrorReporter},
 };
 use std::collections::HashMap;
+use std::fmt::format;
+use crate::codegen::scope::StructDef;
 
 pub struct TypeResolver {
-    aliases: HashMap<String, Type>,
+    aliases: HashMap<String, StructDef>,
+
 }
 
 impl TypeResolver {
@@ -15,14 +18,14 @@ impl TypeResolver {
         }
     }
 
-    pub fn register(&mut self, name: String, ty: Type) {
+    pub fn register(&mut self, name: String, ty: StructDef) {
         self.aliases.insert(name, ty);
     }
 
     pub fn resolve(&self, ty: &Type) -> Option<Type> {
         match ty {
             Type::Named(name) => match self.aliases.get(name) {
-                Some(inner) => self.resolve(inner),
+                Some(_) => Some(Type::Named(name.clone())),
                 None => None,
             },
             Type::Data(bits) => Some(Type::Data(*bits)),
@@ -42,7 +45,16 @@ impl TypeResolver {
             Type::Void => Some("void".to_string()),
             Type::Ref(_) => Some("ptr".to_string()),
             Type::Generic(n, _) => Some(format!("%struct.{}", n)),
-            Type::Named(_) => unreachable!(),
+            Type::Named(name) => {
+                let mut types = String::from("<{ ");
+                let strct = self.aliases.get(&name).unwrap();
+                for (_, ty) in &strct.fields {
+                    types.push_str(format!("{}, ", self.llvm_type(ty).unwrap()).as_str())
+                }
+                types = types.strip_suffix(", ")?.to_string();
+                types.push_str(" }>");
+                Some(types)
+            },
             Type::Pointer(_) => Some("ptr".to_string()),
         }
     }

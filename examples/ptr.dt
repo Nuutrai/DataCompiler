@@ -1,8 +1,38 @@
+data Array<> {
+    ptr: data&
+    len: data16
+}
+
+data new_Array(len: data16) {
+    data ptr: data& = &0 // Creates a new free pointer on the stack
+    // Unfinished function, and this is purely for testing to see if something like that worked.
+    // It's pretty much useless as it doesn't guarantee that more than one byte is free
+    data _init_16: data16 = 0
+    data ptr16: data& = &_init_16 // Now, this one technically works, but like, why would you do this
+}
+
 data main() {
     data obj: data16 = 11_324
     data ptr: data& = &obj
+    data wow: data = 3
+    data wow2 = wow
+    data str = "a"
+    data prim_arr: data16[4] = [4, 2]
+    prim_arr[0] = 22
+    data arr: Array
+    arr = new_Array(4)
+    get_at(arr, 0)
     write(&get_at_index(ptr, 0), 3)
-    0
+}
+
+
+
+data x86_64-apple-darwin$_new_Array(data&, data16): Array {
+    ret
+}
+
+data x86_64-apple-darwin$get_at(Array, data16): data {
+    ret
 }
 
 data x86_64-apple-darwin$get_at_index(data&, data): data {

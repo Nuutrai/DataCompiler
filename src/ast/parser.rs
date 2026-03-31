@@ -21,6 +21,7 @@ pub enum Expr {
     Identifier(String, TextSpan),
     Pointer(Box<Expr>, TextSpan),
     Group(Box<Expr>, TextSpan),
+    List(Vec<Expr>, TextSpan),
     Call {
         callee: Box<Expr>,
         args: Vec<Expr>,
@@ -56,6 +57,7 @@ impl Expr {
             Expr::Call { span, .. } => span,
             Expr::Index { span, .. } => span,
             Expr::Ternary { span, .. } => span,
+            Expr::List(_, s) => s,
         }
     }
 }
@@ -80,7 +82,7 @@ pub enum Statement {
     Variable {
         name: String,
         ty: Option<Type>,
-        value: Expr,
+        value: Option<Expr>,
         span: TextSpan,
     },
     Assign {
@@ -342,7 +344,6 @@ impl Parser {
         }
     }
 
-    // TODO Should we make this not have an optional type?
     fn parse_variable(&mut self) -> Statement {
         let span = self.span();
         let name = self.expect_identifier();
@@ -351,8 +352,11 @@ impl Parser {
         } else {
             None
         };
-        self.expect(&TokenKind::Equals);
-        let value = self.parse_expr();
+        let value = if self.match_kind(&TokenKind::Equals) {
+            Some(self.parse_expr())
+        } else {
+            None
+        };
         Statement::Variable {
             name,
             ty,
@@ -640,6 +644,22 @@ impl Parser {
             TokenKind::Char(b) => {
                 self.advance();
                 Expr::Number(b as usize, span)
+            }
+            TokenKind::SquareLeft => {
+                self.advance();
+                let mut values = Vec::new();
+                if self.match_kind(&TokenKind::SquareRight) {
+                    // TODO Warnings
+                    return Expr::List(values, span);
+                };
+                loop {
+                    values.push(self.parse_expr());
+                    if self.match_kind(&TokenKind::SquareRight) {
+                        break;
+                    }
+                    self.match_kind(&TokenKind::Comma);
+                }
+                Expr::List(values, span)
             }
             TokenKind::Ampersand => {
                 self.advance();

@@ -1,10 +1,12 @@
-use crate::ast::parser::{Expr, Statement};
+use crate::ast::parser::{AssignTarget, Expr, Statement};
 use crate::error::{ErrorKind, ErrorReporter};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use crate::ast::lexer::TextSpan;
 
 pub struct OwnershipChecker {
     scope: HashMap<String, bool>,
     pub errors: ErrorReporter,
+    undefined_vars: HashMap<String, Statement>,
 }
 
 impl OwnershipChecker {
@@ -12,6 +14,7 @@ impl OwnershipChecker {
         Self {
             scope: HashMap::new(),
             errors: ErrorReporter::new(file),
+            undefined_vars: HashMap::new(),
         }
     }
 
@@ -19,13 +22,23 @@ impl OwnershipChecker {
         for stmt in statements {
             self.check_statement(stmt);
         }
+        self.undefined_vars.clear();
     }
 
     fn check_statement(&mut self, stmt: &Statement) {
         match stmt {
-            Statement::Variable { name, value, .. } => {
-                self.check_expr(value);
-                self.scope.insert(name.clone(), true);
+            Statement::Variable { name, value, span, .. } => {
+                match value {
+                    Some(value) => {
+                        self.check_expr(value);
+                        self.scope.insert(name.clone(), true);
+                    }
+                    None => {
+                        self.scope.insert(name.clone(), true);
+                        self.undefined_vars.insert(name.clone(), stmt.clone());
+                    },
+                }
+
             }
             Statement::Function { args, body, .. } => {
                 for (name, _) in args {
@@ -33,8 +46,14 @@ impl OwnershipChecker {
                 }
                 self.check(body);
             }
-            Statement::Assign { value, .. } => {
+            Statement::Assign { target, value, .. } => {
                 self.check_expr(value);
+                match target {
+                    AssignTarget::Variable(name) => {
+                        self.undefined_vars.remove(name);
+                    }
+                    _ => {}
+                }
             }
             Statement::Struct { .. } => {}
             Statement::Expr(e) => self.check_expr(e),
@@ -53,7 +72,12 @@ impl OwnershipChecker {
                     span.start,
                     span.len(),
                 ),
-                Some(owned) => *owned = false,
+                Some(owned) => {
+                    if self.undefined_vars.contains_key(name) {
+                        self.errors.error(ErrorKind::NeverDefined(name.clone()), span.line, span.start, span.end-span.start+1);
+                    }
+                    *owned = false
+                },
                 None => {}
             },
 
@@ -83,7 +107,12 @@ impl OwnershipChecker {
                 self.check_expr(then_branch);
                 self.check_expr(else_branch);
             },
-            Expr::Pointer(inner, _) => self.check_expr(inner)
+            Expr::Pointer(inner, _) => self.check_expr(inner),
+            Expr::List(exprs, _) => {
+                for expr in exprs {
+                    self.check_expr(expr);
+                }
+            }
         }
     }
 

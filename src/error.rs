@@ -17,6 +17,8 @@ pub enum ErrorKind {
     UnsupportedFeature(String),
     AlreadyDefined(String),
     ErrorAlreadyHandled(String),
+    NotInScope(String),
+    NeverDefined(String),
 }
 
 impl ErrorKind {
@@ -26,11 +28,13 @@ impl ErrorKind {
             ErrorKind::UnexpectedEof => "E0002",
             ErrorKind::AlreadyConsumed(_) => "E0003",
             ErrorKind::NotDefined(_) => "E0004",
-            ErrorKind::UnknownType(_) => "E0005",
-            ErrorKind::ImportNotFound(_) => "E0006",
-            ErrorKind::UnsupportedFeature(_) => "E0007",
-            ErrorKind::AlreadyDefined(_) => "E0008",
-            ErrorKind::ErrorAlreadyHandled(_) => "E0009",
+            ErrorKind::NotInScope(_) => "E0005",
+            ErrorKind::UnknownType(_) => "E0006",
+            ErrorKind::ImportNotFound(_) => "E0007",
+            ErrorKind::UnsupportedFeature(_) => "E0008",
+            ErrorKind::AlreadyDefined(_) => "E0009",
+            ErrorKind::ErrorAlreadyHandled(_) => "E0010",
+            ErrorKind::NeverDefined(_) => "E0011",
         }
     }
 
@@ -41,7 +45,8 @@ impl ErrorKind {
             }
             ErrorKind::UnexpectedEof => "unexpected end of file".to_string(),
             ErrorKind::AlreadyConsumed(name) => format!("use of consumed value `{}`", name),
-            ErrorKind::NotDefined(name) => format!("cannot find value `{}` in this scope", name),
+            ErrorKind::NotDefined(name) => format!("value `{}` has not been defined", name),
+            ErrorKind::NotInScope(name) => format!("cannot find value `{}` in this scope", name),
             ErrorKind::UnknownType(name) => format!("cannot find type `{}` in this scope", name),
             ErrorKind::ImportNotFound(path) => format!("cannot find file `{}`", path),
             ErrorKind::UnsupportedFeature(msg) => format!("not yet supported: {}", msg),
@@ -51,6 +56,7 @@ impl ErrorKind {
             ErrorKind::ErrorAlreadyHandled(process) => {
                 format!("An error occurred whilst `{}`. Previous processes should render this state impossible. Are you using a tampered or in-dev compiler?", process)
             }
+            ErrorKind::NeverDefined(name) => format!("`{}` is never defined", name)
         }
     }
 
@@ -81,6 +87,7 @@ impl ErrorKind {
             ErrorKind::UnsupportedFeature(n) => n,
             ErrorKind::AlreadyDefined(n) => n,
             ErrorKind::UnexpectedToken { got, .. } => got,
+            ErrorKind::NeverDefined(n) => n,
             _ => "",
         }
     }
