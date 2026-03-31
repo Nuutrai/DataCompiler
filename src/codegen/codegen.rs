@@ -13,6 +13,8 @@ use crate::{
     error::{ErrorKind, ErrorReporter},
 };
 use std::collections::HashSet;
+use std::fmt::format;
+use std::ops::Deref;
 use std::thread::scope;
 use std::vec;
 use crate::codegen::scope::SymbolType;
@@ -257,7 +259,7 @@ impl Codegen {
     }
 
     fn gen_field(&mut self, target: &Expr, field: &str, span: &TextSpan) -> Value {
-        let ptr = self.gen_expr(target);
+        let ptr = self.gen_expr(target).into_iter().nth(0).unwrap();
 
         let struct_name = match self.expr_struct_name(target) {
             Some(n) => n,
@@ -403,7 +405,7 @@ impl Codegen {
                 span,
             } => self.gen_assign(target, value, span),
             Statement::Struct { .. } => Value::new("0", "i8"),  // TODO i8
-            Statement::Expr(e) => self.gen_expr(e),
+            Statement::Expr(e) => self.gen_expr(e).into_iter().next().unwrap(),
             _ => Value::new("0", "i8"),  // TODO i8
         }
     }
@@ -421,15 +423,23 @@ impl Codegen {
         }
 
         let val = if let Some(value) = value {
-            Some(self.gen_expr(value))
-        } else { None };
+            self.gen_expr(value)
+        } else { Vec::new() };
 
-        let resolved = ty.clone().unwrap_or_else(|| match val {
+        let resolved = ty.clone().unwrap_or_else(|| match val.iter().next() {
             Some(v) => {
-                match v.ty.as_str() {
-                    "ptr" => Type::DataArray(8, 0),
-                    _ => Type::Data(8),
+                match value {
+                    Some(Expr::String(s, _)) => {
+                        Type::DataArray(8, val.len())
+                    }
+                    _ => {
+                        match v.ty.as_str() {
+                            "ptr" => Type::DataArray(8, 0),
+                            _ => Type::Data(8),
+                        }
+                    }
                 }
+
             }
             None => Type::Data(8)
         });
@@ -437,23 +447,28 @@ impl Codegen {
         self.scope.insert_local(name, resolved.clone());
         self.emitter
             .emit(&format!("  %{} = alloca {}", name, llvm_ty));
-        if let Some(val) = val {
-            let mut ty = String::new();
-            match value {
-                Some(expr) => {
-                    match expr {
-                        Expr::List(exprs, _) => {
-                            let v = self.gen_expr(exprs.get(0).unwrap());
-                            ty = v.ty.clone();
-                        }
-                        _ => {}
-                    }
+
+        match resolved {
+            Type::DataArray(bits, size) => {
+                let mut llvm_val = String::from("[ ");
+                for i in 0..size {
+                    llvm_val.push_str(&format!("i{} {}, " , bits, val.get(i).unwrap_or(&Value::new("0", "")).name));
                 }
-                _ => {}
+                llvm_val = llvm_val.strip_suffix(", ").unwrap_or(&llvm_val).to_string();
+                llvm_val.push_str(" ]");
+                let mut value = Value::new(&llvm_val, &llvm_ty);
+                self.alloc_store(name, &llvm_ty, &value, &None);
             }
-            // val.name = val.name.replace("{}", &llvm_ty);
-            self.alloc_store(name, &llvm_ty, &val, ty);
+            _ => {
+                match val.into_iter().next() {
+                    Some(v) => {
+                        self.alloc_store(name, &llvm_ty, &v, &None);
+                    }
+                    None => {}
+                }
+            }
         }
+
         Value::new(&format!("%{}", name), &llvm_ty)
     }
 
@@ -472,7 +487,7 @@ impl Codegen {
     }
 
     fn gen_assign(&mut self, target: &AssignTarget, value: &Expr, span: &TextSpan) -> Value {
-        let val = self.gen_expr(value);
+        let val = self.gen_expr(value).into_iter().nth(0).unwrap();
         if val.ty == "void" {
             return Value::new("0", "void");
         }
@@ -518,7 +533,7 @@ impl Codegen {
     fn gen_expr(&mut self, expr: &Expr) -> Vec<Value> {
         match expr {
             Expr::Number(n, _) =>  vec!(Value::new(&n.to_string(), "i8")), // TODO i8
-            Expr::String(s, _) => vec!(self.gen_string(s)),
+            Expr::String(s, _) => self.gen_str(s),
             Expr::Identifier(name, span) => vec!(self.gen_identifier(name, span)),
             Expr::Group(inner, _) => self.gen_expr(inner),
             Expr::Field {
@@ -557,6 +572,14 @@ impl Codegen {
             tmp, len, global_name
         ));
         Value::new(&tmp, "ptr")
+    }
+
+    fn gen_str(&mut self, s: &str) -> Vec<Value> {
+        let mut chars = Vec::new();
+        for ch in s.as_bytes() {
+            chars.push(Value::new(&format!("{}", ch), "i8"));
+        }
+        chars
     }
 
     fn gen_identifier(&mut self, name: &str, span: &TextSpan) -> Value {
