@@ -197,15 +197,15 @@ impl ErrorReporter {
             .map(|(i, _)| i + 1)
     }
 
-    pub fn error(&mut self, kind: ErrorKind, line: usize, _col: usize, len: usize) {
+    pub fn error(&mut self, kind: ErrorKind, line: usize, col: usize, len: usize) {
         let source_line = self.source_lines.get(line.saturating_sub(1)).cloned();
-        let token = kind.token();
+        // let token = kind.token();
         // let len = token.len().max(1);
-        let col = source_line
-            .as_deref()
-            .and_then(|src| Self::find_whole_word(src, token))
-            .unwrap_or(0);
-        let mut err = CompileError::new(kind).at(&self.file, line, col, len);
+        // let col = source_line
+        //     .as_deref()
+        //     .and_then(|src| Self::find_whole_word(src, token))
+        //     .unwrap_or(0);
+        let mut err = CompileError::new(kind).at(&self.file, line, col.saturating_sub(1), len);
         if let Some(src) = source_line {
             err = err.with_source(src);
         }

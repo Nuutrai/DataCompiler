@@ -1,23 +1,29 @@
 data Array<> {
     ptr: data&
-    len: data16
+    len: data64
 }
 
-data new_Array(len: data16) {
+data Point {
+    thing: data
+}
+
+data new_Array(len: data16): Array {
     data ptr: data& = &0 // Creates a new free pointer on the stack
     // Unfinished function, and this is purely for testing to see if something like that worked.
     // It's pretty much useless as it doesn't guarantee that more than one byte is free
     data _init_16: data16 = 0
     data ptr16: data& = &_init_16 // Now, this one technically works, but like, why would you do this
+    _new_Array(ptr16, _init_16)
 }
 
 data main() {
-    data obj: data16 = 11_324
+    data prim_arr: data[5] = [4, 2]
+    data point_arr: Point[3] = [1, 6]
+    data obj = 11_324_0
     data ptr: data& = &obj
     data wow: data = 3
     data wow2 = wow
     data str = "a"
-    data prim_arr: data16[4] = [4, 2]
     prim_arr[0] = 22
     data arr: Array
     arr = new_Array(4)

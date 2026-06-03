@@ -1,6 +1,19 @@
-data x86_64-apple-darwin$print(data) {
-    .extern _puts
-    jmp _puts
+data x86_64-apple-darwin$print(data&) {
+    mov rcx, 0
+    enter:
+    cmp byte ptr [rdi + rcx], 0
+    je terminated
+    loop:
+        inc rcx
+        jmp enter
+    terminated:
+        mov rax, 0x2000004
+        mov rsi, rdi
+        inc rcx
+        mov rdx, rcx
+        mov rdi, 1
+        syscall
+        ret
 }
 
 data x86_64-linux-gnu$print(data) {

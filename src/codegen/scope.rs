@@ -122,17 +122,38 @@ impl ScopeStack {
             if fname == field {
                 return Some((offset, ftype.clone()));
             }
-            offset += field_size(ftype);
+            offset += self.field_size(ftype);
         }
         None
     }
-}
 
-pub fn field_size(ty: &Type) -> usize {
-    match ty {
-        Type::Data(bits) => (bits / 8) as usize,
-        Type::DataArray(bits, n) => n * (bits / 8) as usize,
-        Type::Pointer(_) => 8,
-        _ => 1,
+    pub fn field_size(&self, ty: &Type) -> usize {
+        match ty {
+            Type::Data(bits) => (bits / 8) as usize,
+            Type::Array(ty, n) => n * (self.field_size(ty) / 8),
+            Type::Pointer(_) => 8,
+            Type::Named(name) => {
+                let def = self.structs.get(name).unwrap(); // TODO Add proper error handling
+                let mut offset = 0;
+                for (_, ty) in &def.fields {
+                    offset += self.field_size(ty);
+                }
+                offset
+            }
+            Type::Generic(name, types) => {
+                let mut offset = 0;
+                let def = self.structs.get(name).unwrap();
+                for (_, ty) in &def.fields {
+
+                    offset += self.field_size(ty);
+                }
+                offset
+            }
+            _ => {
+                8
+            },
+        }
     }
 }
+
+

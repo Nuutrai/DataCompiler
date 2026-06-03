@@ -6,7 +6,7 @@ use crate::{
     codegen::{
         compiler::Compiler,
         emitter::Emitter,
-        scope::{ScopeStack, Storage, field_size},
+        scope::{ScopeStack, Storage},
         type_resolver::TypeResolver,
         value::Value,
     },
@@ -17,7 +17,9 @@ use std::fmt::format;
 use std::ops::Deref;
 use std::thread::scope;
 use std::vec;
+use crate::ast::parser::Parser;
 use crate::codegen::scope::SymbolType;
+use crate::util::string_to_number;
 
 pub struct Codegen {
     emitter: Emitter,
@@ -143,8 +145,10 @@ impl Codegen {
     fn load_and_parse(&self, path: &str) -> Vec<Statement> {
         let input = std::fs::read_to_string(path)
             .unwrap_or_else(|_| panic!("Cannot import '{}': file not found", path));
-        crate::ast::parser::Parser::new(crate::ast::lexer::Lexer::new(input).tokenize(), path)
-            .parse()
+        let mut parser = Parser::new(crate::ast::lexer::Lexer::new(input).tokenize(), path);
+        let ast = parser.parse();
+        parser.errors.fatal_if_any();
+        ast
     }
 }
 
@@ -197,12 +201,16 @@ impl Codegen {
                 format!("{} %{}_arg", ty, n)
             })
             .collect();
-        let returns = self.llvm_type(
+        let is_named = match returns { Some(Type::Named(_)) => true, _ => false };
+        let mut returns = self.llvm_type(
             match returns {
                 Some(ty) => ty,
                 None => &Type::Void
             }
         );
+        if is_named {
+            returns = format!("{{ {} }}", returns);
+        }
         self.emitter
             .emit(&format!("define {} @{}({}) {{", returns, name, arg_str.join(", ")));
         self.emitter.emit("entry:");
@@ -237,12 +245,16 @@ impl Codegen {
             }
         );
         let arg_types: Vec<String> = args.iter().map(|(t)| self.llvm_type(t)).collect();
-        let returns = self.llvm_type(
+        let is_named = match returns { Some(Type::Named(_)) => true, _ => false };
+        let mut returns = self.llvm_type(
             match returns {
                 Some(ty) => ty,
                 None => &Type::Void
             }
         );
+        if is_named {
+            returns = format!("{{ {} }}", returns);
+        }
         self.emitter
             .emit(&format!("declare {} @{}({})", returns, name, arg_types.join(", ")));
         self.emitter.emit("");
@@ -304,7 +316,7 @@ impl Codegen {
 
         let types: Vec<String> = fields.iter().map(|(_, t)| self.llvm_type(t)).collect();
         self.emitter.emit_global(&format!(
-            "%struct.{} = type {{ {} }}",
+            "%struct.{} = type <{{ {} }}>",
             name, types.join(", ")
         ));
     }
@@ -340,10 +352,11 @@ impl Codegen {
             self.scope.register_symbol(name, &None);
         }
         match ty {
-            Some(Type::DataArray(bits, n)) => {
+            Some(Type::Array(ty, n)) => {
                 let bytes = self.const_bytes_padded(value, *n);
+                let llvm_type = self.llvm_type(ty);
                 self.emitter
-                    .emit_global(&format!("@{} = global [{} x i8] c\"{}\"", name, n, bytes));  // TODO i8
+                    .emit_global(&format!("@{} = global [{} x {}] c\"{}\"", name, n, llvm_type, bytes));
             }
             _ => {
                 let llvm_ty = ty
@@ -430,11 +443,15 @@ impl Codegen {
             Some(v) => {
                 match value {
                     Some(Expr::String(s, _)) => {
-                        Type::DataArray(8, val.len())
+                        Type::Array(Box::from(Type::Data(8)), val.len())
                     }
                     _ => {
                         match v.ty.as_str() {
-                            "ptr" => Type::DataArray(8, 0),
+                            "ptr" => Type::Array(Box::from(Type::Data(8)), 0),
+                            _ if v.ty.as_str().starts_with("i") => {
+                                let bits = v.ty.as_str().strip_prefix("i").unwrap();
+                                Type::Data(string_to_number(bits, 10).unwrap() as u8)
+                            }
                             _ => Type::Data(8),
                         }
                     }
@@ -443,16 +460,21 @@ impl Codegen {
             }
             None => Type::Data(8)
         });
-        let llvm_ty = self.llvm_type(&resolved);
+        let mut llvm_ty = self.llvm_type(&resolved);
+        let is_named = match resolved { Type::Named(_) => true, _ => false };
+        if is_named {
+            llvm_ty = format!("{{ {} }}", llvm_ty);
+        }
         self.scope.insert_local(name, resolved.clone());
         self.emitter
             .emit(&format!("  %{} = alloca {}", name, llvm_ty));
 
         match resolved {
-            Type::DataArray(bits, size) => {
+
+            Type::Array(ty, size) => {
                 let mut llvm_val = String::from("[ ");
                 for i in 0..size {
-                    llvm_val.push_str(&format!("i{} {}, " , bits, val.get(i).unwrap_or(&Value::new("0", "")).name));
+                    llvm_val.push_str(&format!("{} {}, ", self.llvm_type(&ty), val.get(i).unwrap_or(&Value::new("0", "")).name));
                 }
                 llvm_val = llvm_val.strip_suffix(", ").unwrap_or(&llvm_val).to_string();
                 llvm_val.push_str(" ]");
@@ -474,10 +496,11 @@ impl Codegen {
 
     fn alloc_store(&mut self, name: &str, llvm_ty: &str, val: &Value, src_ty: &Option<Type>) {
         match src_ty {
-            Some(Type::DataArray(bits, n)) if *n > 0 && val.ty == "ptr" => {
+            Some(Type::Array(ty, n)) if *n > 0 && val.ty == "ptr" => {
+                let llvm_ty = self.llvm_type(ty);
                 self.emitter.emit(&format!(
-                    "  call void @llvm.memcpy.p0.p0.i64(ptr %{}, ptr {}, i64 {}, i1 false)",  // TODO i64
-                    name, val.name, n
+                    "  call void @llvm.memcpy.p0.p0.i64(ptr %{}, ptr {}, {} {}, i1 false)",
+                    name, val.name, llvm_ty, n
                 ));
             }
             _ => self
@@ -506,7 +529,11 @@ impl Codegen {
                 return Value::new("0", "i8");  // TODO i8
             }
         };
-        let llvm_ty = self.llvm_type(&ty);
+        let mut llvm_ty = self.llvm_type(&ty);
+        let is_named = match ty { Type::Named(_) => true, _ => false };
+        if is_named {
+            llvm_ty = format!("{{ {} }}", llvm_ty);
+        }
         self.emitter
             .emit(&format!("  store {} {}, ptr %{}", llvm_ty, val.name, name));
         Value::new(&format!("%{}", name), &llvm_ty)
@@ -532,7 +559,16 @@ impl Codegen {
 impl Codegen {
     fn gen_expr(&mut self, expr: &Expr) -> Vec<Value> {
         match expr {
-            Expr::Number(n, _) =>  vec!(Value::new(&n.to_string(), "i8")), // TODO i8
+            Expr::Number(n, _) => {
+                let mut bit_length: usize = 8;
+                loop {
+                    if 1<<bit_length >= *n {
+                        break
+                    }
+                    bit_length = bit_length*2;
+                }
+                vec!(Value::new(&n.to_string(), format!("i{}", bit_length).as_str()))
+            }
             Expr::String(s, _) => self.gen_str(s),
             Expr::Identifier(name, span) => vec!(self.gen_identifier(name, span)),
             Expr::Group(inner, _) => self.gen_expr(inner),
@@ -579,6 +615,7 @@ impl Codegen {
         for ch in s.as_bytes() {
             chars.push(Value::new(&format!("{}", ch), "i8"));
         }
+        chars.push(Value::new("0", "i8"));
         chars
     }
 
@@ -598,11 +635,12 @@ impl Codegen {
             Storage::Global => "@",
         };
         match &ty {
-            Type::DataArray(bits, n) => {
+            Type::Array(ty, n) => {
                 let tmp = self.emitter.fresh();
+                let llvm_ty = self.llvm_type(&ty);
                 self.emitter.emit(&format!(
-                    "  {} = getelementptr [{} x i{}], ptr {}{}, i32 0, i32 0", // TODO i32
-                    tmp, n, bits, prefix, name
+                    "  {} = getelementptr [{} x {}], ptr {}{}, i32 0, i32 0", // TODO i32
+                    tmp, n, llvm_ty, prefix, name
                 ));
                 Value::new(&tmp, "ptr")
             }
@@ -637,7 +675,11 @@ impl Codegen {
             }
             Type::Named(_) => {
                 let tmp = self.emitter.fresh();
-                let llvm_ty = self.llvm_type(&ty);
+                let mut llvm_ty = self.llvm_type(&ty);
+                let is_named = match ty { Type::Named(_) => true, _ => false };
+                if is_named {
+                    llvm_ty = format!("{{ {} }}", llvm_ty);
+                }
                 self.emitter.emit(
                     &format!("  {} = load {}, ptr {}{}", tmp, llvm_ty.as_str(), prefix, name)
                 );
@@ -703,7 +745,16 @@ impl Codegen {
             },
             None => &Type::Data(8),
         };
-        let ty = self.types.llvm_type(returns).unwrap_or("i8".to_string());
+        let mut ty = self.types.llvm_type(returns).unwrap_or("i8".to_string());
+        let is_named = match returns { Type::Named(_) => true, _ => false };
+        // let mut returns = self.llvm_type(
+        //     match returns {
+        //         ty => ty
+        //     }
+        // );
+        if is_named {
+            ty = format!("{{ {} }}", ty);
+        }
         if ty == "void" {
             self.emitter.emit(&format!(
                 "  call {} @{}({})",

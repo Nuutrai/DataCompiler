@@ -1,4 +1,9 @@
 use std::ops::Shr;
+use crate::{
+    util::{
+        string_to_number
+    }
+};
 
 #[derive(Debug, Clone)]
 pub enum TokenKind {
@@ -44,21 +49,23 @@ pub struct TextSpan {
     pub(crate) start: usize,
     pub(crate) end: usize,
     pub(crate) line: usize,
+    pub(crate) column: usize,
     pub(crate) literal: String,
 }
 
 impl TextSpan {
-    pub fn new(start: usize, end: usize, line: usize, literal: String) -> Self {
+    pub fn new(start: usize, end: usize, line: usize, column: usize, literal: String) -> Self {
         Self {
             start: start + 1,
             end,
             line,
+            column,
             literal,
         }
     }
 
     pub fn len(&self) -> usize {
-        self.end - self.start
+        self.end.saturating_sub(self.start)
     }
 }
 
@@ -78,6 +85,7 @@ pub(crate) struct Lexer {
     input: String,
     current_pos: usize,
     current_line: usize,
+    current_column: usize,
 }
 
 // TODO Add support for 0x, 0b, etc.
@@ -87,6 +95,7 @@ impl Lexer {
             input: input.replace("\r\n", "\n").trim().to_string(),
             current_pos: 0,
             current_line: 1,
+            current_column: 0,
         }
     }
 
@@ -178,9 +187,11 @@ impl Lexer {
 
         if c == '\n' {
             self.current_line += 1;
+            self.current_column = 0;
         }
 
         self.current_pos += 1;
+        self.current_column += 1;
         Some(c)
     }
 
@@ -219,7 +230,7 @@ impl Lexer {
         let ch = self.consume().unwrap();
         Token::new(
             kind,
-            TextSpan::new(start, self.current_pos, self.current_line, ch.to_string()),
+            TextSpan::new(start, self.current_pos, self.current_line, self.current_column, ch.to_string()),
         )
     }
 
@@ -281,6 +292,7 @@ impl Lexer {
                 start,
                 self.current_pos,
                 self.current_line,
+                self.current_column,
                 (ch as char).to_string(),
             ),
         )
@@ -297,10 +309,10 @@ impl Lexer {
                  if stripped == "" {
                      return Token::new(
                          TokenKind::Data(None),
-                         TextSpan::new(start, self.current_pos, self.current_line, buffer),
+                         TextSpan::new(start, self.current_pos, self.current_line, self.current_column, buffer),
                      )
                  }
-                 match Self::string_to_number(stripped) {
+                 match string_to_number(stripped, 10) {
                      Some(num) => {
                          if Self::is_possible_bit_size(num as u8) {
                              return self.error_token(start, format!("Unsupported bit size: {}", num).as_str());
@@ -315,15 +327,45 @@ impl Lexer {
 
         Token::new(
             kind,
-            TextSpan::new(start, self.current_pos, self.current_line, buffer),
+            TextSpan::new(start, self.current_pos, self.current_line, self.current_column, buffer),
         )
     }
 
     fn consume_number(&mut self) -> Token {
         let start = self.current_pos;
         let mut buffer = String::new();
+        let mut radix = 10;
+        if self.current_char() == Some('0') {
+            match self.peek_char() {
+                Some('b') => {
+                    self.consume_n_chars(2);
+                    radix = 2;
+                }
+                Some('x') => {
+                    self.consume_n_chars(2);
+                    radix = 16;
+                }
+                Some('d') => {
+                    self.consume_n_chars(2);
+                }
+                Some(c) if c.is_alphabetic() => {
+                    self.consume_n_chars(2);
+                    return Token::new(
+                        TokenKind::Error,
+                        TextSpan::new(
+                            start,
+                            self.current_pos,
+                            self.current_line,
+                            self.current_column,
+                            c.to_string(),
+                        ),
+                    );
+                },
+                _ => {}
+            }
+        }
         while let Some(_) = self.current_char() {
-            self.consume_while(Some(&mut buffer), |c| c.is_digit(10));
+            self.consume_while(Some(&mut buffer), |c| c.is_digit(radix));
 
             if self.current_char() != Some('_') {
                 break;
@@ -332,35 +374,18 @@ impl Lexer {
             self.consume();
         }
 
-        match Self::string_to_number(&buffer) {
+        match string_to_number(&buffer, radix) {
             Some(n) => Token::new(
                 TokenKind::Number(n),
-                TextSpan::new(start, self.current_pos, self.current_line, buffer),
+                TextSpan::new(start, self.current_pos, self.current_line, self.current_column, buffer),
             ),
             None => self.error_token(start, "Number was not a number"),
         }
 
     }
 
-    fn string_to_number(buffer: &str) -> Option<usize> {
-        let mut number: usize = 0;
-
-        for c in buffer.chars() {
-            number *= 10;
-            match c.to_digit(10) {
-                None => {
-                    return None
-                }
-                Some(n) => {
-                    number += n as usize;
-                }
-            }
-        }
-        Some(number)
-    }
-
     fn is_possible_bit_size(number: u8) -> bool {
-        if number > 64 {
+        if number >= 64 {
             return false;
         }
         let mut current: u8 = 64;
@@ -393,6 +418,7 @@ impl Lexer {
                             start,
                             self.current_pos,
                             self.current_line,
+                            self.current_column,
                             "Unterminated string".to_string(),
                         ),
                     );
@@ -408,7 +434,7 @@ impl Lexer {
 
         Token::new(
             TokenKind::StringLiteral(buffer.clone()),
-            TextSpan::new(start, self.current_pos, self.current_line, buffer),
+            TextSpan::new(start, self.current_pos, self.current_line, self.current_column, buffer),
         )
     }
 
@@ -421,7 +447,7 @@ impl Lexer {
     fn error_token(&mut self, start: usize, msg: &str) -> Token {
         Token::new(
             TokenKind::Error,
-            TextSpan::new(start, self.current_pos, self.current_line, msg.to_string()),
+            TextSpan::new(start, self.current_pos, self.current_line, self.current_column, msg.to_string()),
         )
     }
 

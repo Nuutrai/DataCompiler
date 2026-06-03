@@ -1,0 +1,21 @@
+data(std::io)
+
+data main() {
+    data obj = "Hello!"
+    print(obj)
+    data a = 30
+    data b = 30
+    data sum = add(a,b)
+    data ptr: data& = &sum
+    print(ptr)
+}
+
+data x86_64-apple-darwin$data_to_string(data) : data& {
+
+}
+
+data x86_64-apple-darwin$add(data, data) : data {
+    mov rax, rdi
+    add rsi, rax
+    ret
+}

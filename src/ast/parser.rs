@@ -1,3 +1,4 @@
+use std::process::exit;
 use crate::{
     ast::lexer::{TextSpan, Token, TokenKind},
     error::{ErrorKind, ErrorReporter},
@@ -6,7 +7,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub enum Type {
     Data(u8),
-    DataArray(u8, usize),
+    Array(Box<Type>, usize),
     Named(String),
     Ref(Box<Type>),
     Pointer(Box<Type>),
@@ -207,7 +208,7 @@ impl Parser {
     fn span(&self) -> TextSpan {
         self.tokens
             .get(self.pos)
-            .unwrap_or(&Token::new(TokenKind::Eof, TextSpan::new(0, 0, 0, String::from("Error: Invaid token"))))
+            .unwrap_or(&Token::new(TokenKind::Eof, TextSpan::new(0, 0, 0, 0, String::from("Error: Invaid token"))))
             .span.clone()
     }
 
@@ -294,6 +295,48 @@ impl Parser {
                         self.advance();
                         s
                     }
+                    TokenKind::Identifier(s) => {
+                        let mut path = String::from(s);
+                        self.advance();
+                        loop {
+                            match self.current() {
+                                TokenKind::Colon => {
+                                    self.expect(&TokenKind::Colon);
+                                    self.advance();
+                                    match self.current() {
+                                        TokenKind::Identifier(s) => {
+                                            path.push_str(format!("::{}", s).as_str());
+                                            self.advance();
+                                        },
+                                        _ => {
+                                            self.errors.error(
+                                                ErrorKind::UnexpectedToken {
+                                                    expected: "import path".to_string(),
+                                                    got: format!("{:?}", self.current()),
+                                                },
+                                                span.line,
+                                                span.start,
+                                                span.len(),
+                                            );
+                                        }
+                                    }
+                                }
+                                TokenKind::RightParen => break,
+                                _ => {
+                                    self.errors.error(
+                                        ErrorKind::UnexpectedToken {
+                                            expected: "import path or Right Parenthesis".to_string(),
+                                            got: format!("{:?}", self.current()),
+                                        },
+                                        span.line,
+                                        span.start,
+                                        span.len(),
+                                    );
+                                }
+                            }
+                        }
+                        path
+                    }
                     other => {
                         let span = self.span();
                         self.errors.error(
@@ -317,7 +360,31 @@ impl Parser {
                 TokenKind::Colon => self.parse_variable(),
                 TokenKind::AngledLeft => self.parse_struct(), // data Foo<T> {
                 TokenKind::CurlyLeft => self.parse_struct(),  // data Foo {
-                _ => self.parse_asm_function(),
+                _ => {
+                    let mut index = 1;
+                    loop {
+                        match self.peek_by(index) {
+                            TokenKind::Dollar => {
+                                return self.parse_asm_function();
+                            }
+                            TokenKind::Eof => {
+                                let span = self.span();
+                                self.errors.error(
+                                    ErrorKind::UnexpectedToken {
+                                        expected: "Variable, function, or import definition".to_string(),
+                                        got: "End of file".to_string(),
+                                    },
+                                    span.line,
+                                    span.start,
+                                    span.len(),
+                                );
+                                self.errors.fatal_if_any();
+                            }
+                            _ => {}
+                        }
+                        index += 1;
+                    }
+                }
             },
         }
     }
@@ -399,20 +466,10 @@ impl Parser {
         //     return Type::Ref(Box::new(self.parse_type()));
         // }
 
-        match self.current().clone() {
+        let ty = match self.current().clone() {
             TokenKind::Data(bits) => {
                 self.advance();
-                if self.match_kind(&TokenKind::SquareLeft) {
-                    let size = match self.current().clone() {
-                        TokenKind::Number(n) => {
-                            self.advance();
-                            n
-                        }
-                        _ => 0,
-                    };
-                    self.expect(&TokenKind::SquareRight);
-                    Type::DataArray(bits.unwrap_or(8), size)
-                } else if self.match_kind(&TokenKind::Ampersand) {
+                if self.match_kind(&TokenKind::Ampersand) {
                     Type::Pointer(Box::from(Type::Data(bits.unwrap_or(8))))
                 } else {
                     if bits == Some(0) {
@@ -439,6 +496,7 @@ impl Parser {
                 } else {
                     Type::Named(name)
                 }
+                
             }
             other => {
                 let span = self.span();
@@ -453,7 +511,19 @@ impl Parser {
                 );
                 Type::Data(8)
             }
+        };
+        if self.match_kind(&TokenKind::SquareLeft) {
+            let size = match self.current().clone() {
+                TokenKind::Number(n) => {
+                    self.advance();
+                    n
+                }
+                _ => 0,
+            };
+            self.expect(&TokenKind::SquareRight);
+            return Type::Array(Box::from(ty), size)
         }
+        ty
     }
 
     fn parse_struct(&mut self) -> Statement {
@@ -560,6 +630,22 @@ impl Parser {
                 }
                 TokenKind::Comma => {
                     body.push_str(", ");
+                    self.advance();
+                }
+                TokenKind::Number(n) => {
+                    body.push_str(&n.to_string());
+                    self.advance();
+                }
+                TokenKind::Error => {
+                    let span = self.span();
+                    self.errors.error(
+                        ErrorKind::UnexpectedToken {
+                            expected: String::from("Delimiter or number"),
+                            got: span.literal.clone(),
+                        },
+                        span.line,
+                        span.column,
+                        span.len());
                     self.advance();
                 }
                 _ => {

@@ -9,6 +9,7 @@ mod analysis;
 mod ast;
 mod codegen;
 mod error;
+mod util;
 
 fn main() {
     let args: Vec<String> = env::args().collect();

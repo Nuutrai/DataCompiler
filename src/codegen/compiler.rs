@@ -49,7 +49,7 @@ impl Compiler {
         Command::new("clang")
             .args(self.os_flags.clone())
             .arg(format!("--target={target}").as_str())
-            .args(["-Woverride-module", "-c", "out.ll", "-o", "out.o"])
+            .args(["-Woverride-module", "-c", "out.ll", "-o", "out.o", "-O"])
             .status()
             .expect("IR compile failed");
         let obj_files = self.compile_asm(target);

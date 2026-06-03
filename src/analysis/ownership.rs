@@ -2,6 +2,7 @@ use crate::ast::parser::{AssignTarget, Expr, Statement};
 use crate::error::{ErrorKind, ErrorReporter};
 use std::collections::{HashMap, HashSet};
 use crate::ast::lexer::TextSpan;
+use crate::ast::parser::Type::Pointer;
 
 pub struct OwnershipChecker {
     scope: HashMap<String, bool>,
@@ -27,10 +28,15 @@ impl OwnershipChecker {
 
     fn check_statement(&mut self, stmt: &Statement) {
         match stmt {
-            Statement::Variable { name, value, span, .. } => {
+            Statement::Variable { name, value, span, ty } => {
                 match value {
                     Some(value) => {
-                        self.check_expr(value);
+                        match ty {
+                            Some(Pointer(_)) => {}
+                            _ => {
+                                self.check_expr(value);
+                            }
+                        }
                         self.scope.insert(name.clone(), true);
                     }
                     None => {
