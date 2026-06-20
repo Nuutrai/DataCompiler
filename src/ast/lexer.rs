@@ -56,7 +56,7 @@ pub struct TextSpan {
 impl TextSpan {
     pub fn new(start: usize, end: usize, line: usize, column: usize, literal: String) -> Self {
         Self {
-            start: start + 1,
+            start,
             end,
             line,
             column,
@@ -164,9 +164,6 @@ impl Lexer {
     fn skip_comments(&mut self) {
         while self.current_char() == Some('/') && self.peek_char() == Some('/') {
             self.consume_until(None, |c| c == '\n');
-            if self.current_char() == Some('\n') {
-                self.consume();
-            }
         }
     }
 

@@ -29,6 +29,12 @@ impl OwnershipChecker {
     fn check_statement(&mut self, stmt: &Statement) {
         match stmt {
             Statement::Variable { name, value, span, ty } => {
+                match self.scope.get_mut(name) {
+                    Some(unowned) => {
+                        *unowned = true;
+                    }
+                    _ => {}
+                };
                 match value {
                     Some(value) => {
                         match ty {
@@ -75,12 +81,12 @@ impl OwnershipChecker {
                 Some(false) => self.errors.error(
                     ErrorKind::AlreadyConsumed(name.clone()),
                     span.line,
-                    span.start,
+                    span.column,
                     span.len(),
                 ),
                 Some(owned) => {
                     if self.undefined_vars.contains_key(name) {
-                        self.errors.error(ErrorKind::NeverDefined(name.clone()), span.line, span.start, span.end-span.start+1);
+                        self.errors.error(ErrorKind::NeverDefined(name.clone()), span.line, span.column, span.end-span.start+1);
                     }
                     *owned = false
                 },
@@ -118,7 +124,7 @@ impl OwnershipChecker {
                 for expr in exprs {
                     self.check_expr(expr);
                 }
-            }
+            },
         }
     }
 
@@ -128,7 +134,7 @@ impl OwnershipChecker {
                 Some(false) => self.errors.error(
                     ErrorKind::AlreadyConsumed(name.clone()),
                     span.line,
-                    span.start,
+                    span.column,
                     span.len(),
                 ),
                 _ => {}

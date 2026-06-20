@@ -66,7 +66,7 @@ impl Codegen {
         self.errors.error(
             ErrorKind::NotDefined(name.to_string()),
             span.line,
-            span.start,
+            span.column,
             name.len(),
         );
     }
@@ -75,7 +75,7 @@ impl Codegen {
         self.errors.error(
             ErrorKind::AlreadyDefined(name.to_string()),
             span.line,
-            span.start,
+            span.column,
             name.len(),
         );
     }
@@ -167,7 +167,7 @@ impl Codegen {
             } => {
                 match value {
                     Some(value) => self.gen_global_var(name, ty, &value),
-                    None => self.errors.error(ErrorKind::NotDefined(name.clone()), span.line, span.start, span.end-span.start+1)
+                    None => self.errors.error(ErrorKind::NotDefined(name.clone()), span.line, span.column, span.end-span.start+1)
                 }
             },
             Statement::Expr(e) => {
@@ -221,8 +221,8 @@ impl Codegen {
                 .emit(&format!("  store {} %{}_arg, ptr %{}", ty, n, n));
         }
         let mut last = Value::new("0", &returns);
-        for s in body {
-            last = self.gen_stmt_inner(s);
+        for stmt in body {
+            last = self.gen_stmt_inner(stmt);
         }
         if returns == "void" {
             self.emitter
@@ -289,7 +289,7 @@ impl Codegen {
                 self.errors.error(
                     ErrorKind::NotDefined(format!("{}.{}", struct_name, field)),
                     span.line,
-                    span.start,
+                    span.column,
                     field.len(),
                 );
                 return Value::new("0", "i8"); // TODO i8
@@ -324,8 +324,8 @@ impl Codegen {
     fn expr_struct_name(&self, expr: &Expr) -> Option<String> {
         match expr {
             Expr::Identifier(name, _) => match self.scope.lookup(name) {
-                Some((Type::Named(n), _)) => Some(n),
-                Some((Type::Generic(n, _), _)) => Some(n),
+                Some((Type::Named(n), _, _)) => Some(n),
+                Some((Type::Generic(n, _), _, _)) => Some(n),
                 _ => None,
             },
             _ => None,
@@ -430,9 +430,13 @@ impl Codegen {
         value: &Option<Expr>,
         span: &TextSpan,
     ) -> Value {
-        if self.scope.contains_local(name) {
-            self.err_already_defined(name, span);
-            return Value::new("0", "i8");  // TODO i8
+        let lookup = self.scope.lookup(name);
+        if lookup.is_some() {
+            let (_, _, is_consumed) = lookup.unwrap();
+            if !is_consumed {
+                self.err_already_defined(name, span);
+                return Value::new("0", "i8");  // TODO i8
+            }
         }
 
         let val = if let Some(value) = value {
@@ -461,6 +465,11 @@ impl Codegen {
             None => Type::Data(8)
         });
         let mut llvm_ty = self.llvm_type(&resolved);
+        if val.iter().nth(0).is_some() {
+            if val.iter().nth(0).unwrap().ty != llvm_ty {
+                // TODO Warning system for mismatch types
+            }
+        }
         let is_named = match resolved { Type::Named(_) => true, _ => false };
         if is_named {
             llvm_ty = format!("{{ {} }}", llvm_ty);
@@ -523,7 +532,7 @@ impl Codegen {
     // TODO When we run into issues with Void, we'll edit this
     fn gen_assign_var(&mut self, name: &str, val: Value, span: &TextSpan) -> Value {
         let ty = match self.scope.lookup(name) {
-            Some((t, _)) => t,
+            Some((t, _, _)) => t,
             None => {
                 self.err_not_defined(name, span);
                 return Value::new("0", "i8");  // TODO i8
@@ -542,7 +551,7 @@ impl Codegen {
     fn gen_assign_index(&mut self, name: &str, index: &Expr, val: Value) -> Value {
         let idx = self.gen_expr(index).into_iter().nth(0).unwrap();
         let prefix = match self.scope.lookup(name) {
-            Some((_, Storage::Global)) => "@",
+            Some((_, Storage::Global, _)) => "@",
             _ => "%",
         };
         let gep = self.emitter.fresh();
@@ -591,8 +600,26 @@ impl Codegen {
             Expr::List(exprs, _) => {
                 self.gen_list(exprs)
             },
+            // Expr::Cast { value, ty, .. } => {
+            //     vec!(self.gen_cast(value, ty))
+            // },
         }
     }
+
+    // fn gen_cast(&mut self, val: &Expr, ty: &Type) -> Value {
+    //     let init = self.gen_expr(val).into_iter().nth(0).unwrap();
+    //     let ty = self.types.llvm_type(ty).unwrap();
+    //     let ty = ty.as_str();
+    //
+    //     let tmp = self.emitter.fresh();
+    //
+    //     self.emitter.emit(&format!(
+    //         "{} = bitcast {} {} to {}", tmp, init.ty, init.name, ty
+    //     ));
+    //
+    //     let val = Value::new(tmp.as_str(), ty);
+    //     val
+    // }
 
     fn gen_string(&mut self, s: &str) -> Value {
         let n = self.emitter.tmp_counter();
@@ -621,7 +648,10 @@ impl Codegen {
 
     fn gen_identifier(&mut self, name: &str, span: &TextSpan) -> Value {
         match self.scope.lookup(name) {
-            Some((ty, storage)) => self.emit_var_access(name, ty, storage),
+            Some((ty, storage, mut is_consumed)) => {
+                self.scope.consume(name);
+                self.emit_var_access(name, ty, storage)
+            }
             None => {
                 self.err_not_defined(name, span);
                 Value::new("0", "i8") // TODO i8
@@ -692,7 +722,7 @@ impl Codegen {
         match inner {
             Expr::Identifier(name, span) => {
                 match self.scope.lookup(name) {
-                    Some((ty, storage)) => {
+                    Some((ty, storage, _)) => {
                         // let tmp = self.emitter.fresh();
                         // self.emitter.emit(&format!(
                         //     "  {} = alloca ptr \n  store ptr %{}, ptr {}", tmp, name, tmp

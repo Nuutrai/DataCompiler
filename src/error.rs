@@ -1,3 +1,5 @@
+use std::ops::Add;
+
 #[derive(Debug, Clone)]
 pub struct SourceLocation {
     pub file: String,
@@ -114,7 +116,7 @@ impl CompileError {
             file: file.to_string(),
             line,
             col,
-            len,
+            len: len,
         });
         self
     }
@@ -140,7 +142,7 @@ impl CompileError {
                 eprintln!("  \x1b[36m{} |\x1b[0m", padding);
                 eprintln!("  \x1b[36m{} |\x1b[0m {}", line_str, src);
                 let caret = "^".repeat(loc.len);
-                let caret_pad = " ".repeat(loc.col.saturating_sub(1));
+                let caret_pad = " ".repeat(loc.col.saturating_sub(loc.len));
                 eprintln!(
                     "  \x1b[36m{} |\x1b[0m {}\x1b[31m{}\x1b[0m",
                     padding, caret_pad, caret

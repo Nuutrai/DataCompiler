@@ -44,6 +44,12 @@ pub enum Expr {
         field: String,
         span: TextSpan,
     },
+    // Cast {
+    //     value: Box<Expr>,
+    //     oty: Box<Type>,
+    //     ty: Box<Type>,
+    //     span: TextSpan,
+    // }
 }
 
 impl Expr {
@@ -59,6 +65,7 @@ impl Expr {
             Expr::Index { span, .. } => span,
             Expr::Ternary { span, .. } => span,
             Expr::List(_, s) => s,
+            // Expr::Cast { span, .. } => span,
         }
     }
 }
@@ -138,6 +145,13 @@ impl Parser {
             .unwrap_or(&TokenKind::Eof)
     }
 
+    fn peek_behind_by(&self, by: usize) -> &TokenKind {
+        self.tokens
+            .get(self.pos - by)
+            .map(|t| &t.kind)
+            .unwrap_or(&TokenKind::Eof)
+    }
+
     fn advance(&mut self) {
         if self.pos < self.tokens.len() {
             self.pos += 1;
@@ -162,7 +176,7 @@ impl Parser {
                     got: format!("{:?}", self.current()),
                 },
                 span.line,
-                span.start,
+                span.column,
                 span.len(),
             );
         }
@@ -190,7 +204,7 @@ impl Parser {
                         got: format!("{:?}", other),
                     },
                     span.line,
-                    span.start,
+                    span.column,
                     span.len(),
                 );
                 String::new()
@@ -235,7 +249,7 @@ impl Parser {
                             got: literal.clone(),
                         },
                         span.line,
-                        span.start,
+                        span.column,
                         literal.len(),
                     );
                 }
@@ -285,6 +299,24 @@ impl Parser {
     }
 
     fn parse_data(&mut self) -> Statement {
+        if self.pos > 0 {
+            match self.peek_behind_by(1) {
+                TokenKind::Newline | TokenKind::Eof => {},
+                _ => {
+                    let span = self.span();
+                    self.errors.error(
+                        ErrorKind::UnexpectedToken {
+                            expected: "new line".to_string(),
+                            got: format!("{:?}", self.current()),
+                        },
+                        span.line,
+                        span.column,
+                        span.len(),
+                    );
+                    self.errors.fatal_if_any();
+                },
+            };
+        }
         self.advance();
         match self.current() {
             TokenKind::LeftParen => {
@@ -315,7 +347,7 @@ impl Parser {
                                                     got: format!("{:?}", self.current()),
                                                 },
                                                 span.line,
-                                                span.start,
+                                                span.column,
                                                 span.len(),
                                             );
                                         }
@@ -329,7 +361,7 @@ impl Parser {
                                             got: format!("{:?}", self.current()),
                                         },
                                         span.line,
-                                        span.start,
+                                        span.column,
                                         span.len(),
                                     );
                                 }
@@ -345,7 +377,7 @@ impl Parser {
                                 got: format!("{:?}", other),
                             },
                             span.line,
-                            span.start,
+                            span.column,
                             span.len(),
                         );
                         String::new()
@@ -375,7 +407,7 @@ impl Parser {
                                         got: "End of file".to_string(),
                                     },
                                     span.line,
-                                    span.start,
+                                    span.column,
                                     span.len(),
                                 );
                                 self.errors.fatal_if_any();
@@ -506,7 +538,7 @@ impl Parser {
                         got: format!("{:?}", other),
                     },
                     span.line,
-                    span.start,
+                    span.column,
                     span.len(),
                 );
                 Type::Data(8)
@@ -711,6 +743,15 @@ impl Parser {
                 };
                 continue;
             }
+            // if self.match_kind(&TokenKind::Exclamation) {
+            //     let ty = self.parse_type();
+            //     expr = Expr::Cast {
+            //         value: Box::new(expr),
+            //         oty: Box::new(ty.clone()),
+            //         ty: Box::new(ty),
+            //         span,
+            //     }
+            // }
             break;
         }
         expr
@@ -770,7 +811,7 @@ impl Parser {
                         got: format!("{:?}", other),
                     },
                     span.line,
-                    span.start,
+                    span.column,
                     span.len(),
                 );
                 self.advance();

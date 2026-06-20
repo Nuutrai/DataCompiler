@@ -20,6 +20,7 @@ pub struct StructDef {
 
 pub struct ScopeStack {
     scopes: Vec<HashMap<String, Type>>,
+    consumed_vars: Vec<HashMap<String, Type>>,
     global_types: HashMap<String, Type>,
     global_symbols: HashMap<String, SymbolType>,
     pub structs: HashMap<String, StructDef>,
@@ -29,6 +30,7 @@ impl ScopeStack {
     pub fn new() -> Self {
         Self {
             scopes: vec![HashMap::new()],
+            consumed_vars: vec![HashMap::new()],
             global_types: HashMap::new(),
             global_symbols: HashMap::new(),
             structs: HashMap::new(),
@@ -37,10 +39,12 @@ impl ScopeStack {
 
     pub fn enter(&mut self) {
         self.scopes.push(HashMap::new());
+        self.consumed_vars.push(HashMap::new());
     }
 
     pub fn exit(&mut self) {
         self.scopes.pop();
+        self.consumed_vars.pop();
     }
 
     pub fn clear_locals(&mut self) {
@@ -85,16 +89,28 @@ impl ScopeStack {
             .unwrap_or(false)
     }
 
-    pub fn lookup(&self, name: &str) -> Option<(Type, Storage)> {
+    pub fn lookup(&self, name: &str) -> Option<(Type, Storage, bool)> {
+        let mut i = 0;
         for scope in self.scopes.iter().rev() {
             if let Some(ty) = scope.get(name) {
-                return Some((ty.clone(), Storage::Local));
+                let is_consumed = self.consumed_vars.iter().rev().nth(i).unwrap().contains_key(name);
+                return Some((ty.clone(), Storage::Local, is_consumed));
             }
+            i += 1;
         }
         if let Some(ty) = self.global_types.get(name) {
-            return Some((ty.clone(), Storage::Global));
+            return Some((ty.clone(), Storage::Global, false));
         }
         None
+    }
+
+    pub fn consume(&mut self, name: &str) {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(_) = scope.get(name) {
+                scope.remove(name);
+                return;
+            }
+        }
     }
 
     pub fn get_symbol_type(&self, name: &str) -> Option<&SymbolType> {

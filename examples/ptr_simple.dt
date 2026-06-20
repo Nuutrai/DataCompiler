@@ -1,17 +1,45 @@
 data(std::io)
 
+data x86_64-apple-darwin$add(data64, data64) : data64 {
+    mov rax, rdi
+    add rax, rsi
+    ret
+}
+
+data x86_64-apple-darwin$data_to_str(data64) : data& {
+    mov rsi, rsp // Save stack pointer
+    mov rax, rdi // Load argument into lower 64
+    xor rdx, rdx // Zero higher 64
+    mov rdi, 10  // Load 10 into rdi (for division)
+    mov rdx, 0
+    dec rsp      // Avoid overriding the callback info
+    mov byte ptr [rsp], 0 // Null terminator
+    loop:
+
+        dec rsp
+
+        div rdi // Divide rdx:rax by 10
+
+        add rdx, 0x30 // Add 0x30 to the number to get corresponding char
+        mov byte ptr [rsp], dl // Move char bytes to stack
+        xor rdx, rdx // Zero higher
+
+        cmp rax, 0 // Is quotient 0?
+        jne loop   // No? Continue loop
+
+    done:
+        mov rax, rsp // Move pointer of string to return
+        mov rsp, rsi // Reset stack pointer
+        ret
+}
+
 data main() {
     data obj = "Hello!"
     print(obj)
-    data a: data[9] = 30
-    data b = 30
+    data a = 12344
+    data b = 1
     data sum = add(a,b)
-    data ptr: data& = &(sum!data64)
-    print(ptr)
-}
-
-data x86_64-apple-darwin$add(data, data) : data {
-    mov rax, rdi
-    add rsi, rax
-    ret
+    data b = 1
+    data c = add(b,1)
+    print(data_to_str(sum))
 }

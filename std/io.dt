@@ -1,17 +1,15 @@
 data x86_64-apple-darwin$print(data&) {
-    mov rcx, 0
-    enter:
-    cmp byte ptr [rdi + rcx], 0
-    je terminated
+    mov rcx, 0 // Set counter to zero
     loop:
+        cmp byte ptr [rdi + rcx], 0 // Is null terminator?
+        je done // Yes? Break
         inc rcx
-        jmp enter
-    terminated:
-        mov rax, 0x2000004
-        mov rsi, rdi
-        inc rcx
-        mov rdx, rcx
-        mov rdi, 1
+        jmp loop
+    done:
+        mov rax, 0x2000004 // Write
+        mov rsi, rdi       // ptr
+        mov rdx, rcx       // length
+        mov rdi, 1         // stdout
         syscall
         ret
 }
