@@ -129,6 +129,7 @@ impl Codegen {
         }
     }
 
+    // TODO add urls and make sure this works fully
     fn resolve_import(&self, path: &str) -> String {
         if !path.starts_with("std::") {
             return path.to_string();

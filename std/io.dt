@@ -1,4 +1,4 @@
-data x86_64-apple-darwin$print(data&) {
+data x86_64-apple-darwin$write(data&, data) {
     mov rcx, 0 // Set counter to zero
     loop:
         cmp byte ptr [rdi + rcx], 0 // Is null terminator?

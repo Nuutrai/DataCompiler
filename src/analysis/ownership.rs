@@ -19,6 +19,7 @@ impl OwnershipChecker {
         }
     }
 
+    // TODO Do stuff to make consumed variable redeclaration work - Drunk Lexi <3
     pub fn check(&mut self, statements: &[Statement]) {
         for stmt in statements {
             self.check_statement(stmt);
